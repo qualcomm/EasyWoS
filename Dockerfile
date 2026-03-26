@@ -41,9 +41,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Install dependencies from wheels using mount to avoid copying (reduces layer size)
-RUN --mount=type=bind,from=backend-builder,source=/app/wheels,target=/tmp/wheels \
-    pip install --no-cache-dir /tmp/wheels/*
+# Install dependencies from wheels
+COPY --from=backend-builder /app/wheels /tmp/wheels
+RUN pip install --no-cache-dir /tmp/wheels/* && rm -rf /tmp/wheels
 
 # Copy backend application code
 COPY app/ app/
