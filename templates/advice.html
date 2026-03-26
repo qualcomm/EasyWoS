@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Porting Readiness Report</title>
+    <!-- <link rel="icon" href="//img.alicdn.com/tfs/TB1_ZXuNcfpK1RjSZFOXXa6nFXa-32-32.ico" type="image/x-icon"> -->
+    <link rel="icon" href="/static/qualcomm_icon.svg" type="image/svg+xml">
+    <meta charset="UTF-8">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/layui/2.5.6/css/layui.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/4.5.3/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.7.1.js" integrity="sha256-eKhayi8LEQwp4NKxN+CfCh+3qOVUtJn3QNZ0TciWLP4=" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/layui/2.5.6/layui.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.16.0/umd/popper.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.5.0/js/bootstrap.min.js"></script>
+    
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            margin: auto;
+            width: 70%;
+            background-color: #f3f2ef;
+        }
+        header{
+            background-color: black;
+            height: 48px;
+            color: #fff;
+        }
+        span.name{
+            font-size: 22px;
+            font-weight: bold;
+        }
+        .icon-font{
+            font-family: -apple-system, BlinkMacSystemFont, segoe ui, Roboto, helvetica neue, Arial, noto sans, sans-serif, apple color emoji, segoe ui emoji, segoe ui symbol, noto color emoji;
+            font-size: 12px;
+            color: #fff;
+            letter-spacing: 0;
+            font-weight: 400;
+            line-height: 48px;
+        }
+        .btn.focus, .btn:focus {
+            box-shadow: none;
+        }
+        img.logo{
+            height: 18px;
+        }
+        footer {
+            padding: 1em;
+        }
+        svg.icon {
+                width: 1.1em;
+                height: 1.1em;
+                vertical-align: text-top;
+        }
+        .textarea{
+            overflow-x: auto;
+            width: 100%;
+            font-size: 1em;
+            font-family: Courier New;
+            line-height: 1.75;
+            border: solid 1px #e8e8e8;
+            -webkit-user-modify: read-only;
+            padding-left: 10px;
+        }
+        pre.description{
+            white-space: pre-wrap;
+        }
+        pre{
+            font-size: 10pt;
+            font-family: Courier New;
+            margin: 0;
+        }
+        pre.title{
+            font-weight: bold;
+            font-family: Arial, Helvetica, sans-serif;
+            padding: 0 0 0.5em 0;
+        }
+        span{
+            font-family: PingFangSC-Regular;
+            font-size: 12px;
+            font-weight: 400;
+        }
+        span.title{
+            font-weight: bold;
+            font-size: 12pt;
+        }
+        span.summary{
+            color: #00c1de;
+        }
+        span.OtherIssue{
+            color: #999;
+        }
+        span.Error{
+            color: red;
+        }
+        span.PreprocessorErrorIssue{
+            color: #66CDAA;
+        }
+        span.PragmaIssue{
+            color: #BA55D3;
+        }
+        span.CompilerSpecificIssue{
+            color: #1E90FF;
+        }
+        span.CPPStdCodes{
+            color: #8A2BE2;
+        }
+        span.InlineAsmIssue{
+            color: #8A2BE2;
+        }
+        span.IntrinsicIssue{
+            color: #A52A2A;
+        }
+        span.ArchSpecificLibraryIssue{
+            color: #5F9EA0;
+        }
+        span.OldCrtIssue{
+            color: #DDA0DD;
+        }
+        span.DefineOtherArchIssue{
+            color: #FF7F50;
+        }
+        span.CrossCompileIssue{
+            color: #6495ED;
+        }
+        span.AsmSourceIssue{
+            color: #00008B;
+        }
+        span.ConfigGuessIssue{
+            color: #483D8B;
+        }
+        span.NoEquivalentIntrinsicIssue{
+            color: #48D1CC;
+        }
+        span.NoEquivalentInlineAsmIssue{
+            color: #ff6b00;
+        }
+        span.NoEquivalentIssue{
+            color: #95d600;
+        }
+        span.HostCpuDetectionIssue{
+            color: #00c1de;
+        }
+        span.BuildCommandIssue{
+            color: #6495ED;
+        }
+        span.Avx256IntrinsicIssue{
+            color: #DDA0DD;
+        }
+        span.Avx512IntrinsicIssue{
+            color: #483D8B;
+        }
+        span.noIssuesFoundRemark{
+            color: #66CDAA;
+        }
+        span.PortedSourceFilesRemark{
+            color: #BA55D3;
+        }
+        span.PortedInlineAsmRemark{
+            color: #483D8B;
+        }
+        .root {
+            font-size: 16px;
+            padding: 0 0 1em 0;
+            font-weight: bold;
+        }
+        h2{
+            display: block;
+            font-size: 16px;
+            margin-block-start: 0.83em;
+            margin-block-end: 0.83em;
+            margin-inline-start: 0px;
+            margin-inline-end: 0px;
+            font-weight: bold;
+        }
+        .nocursor{
+            cursor: default !important;
+        }
+        a.operation {
+            color: #999;
+        }
+        .card-header {
+            padding: 0;
+            border-bottom: 0;
+            background-color: rgba(0,0,0,0.07);
+        }
+        .card {
+            border-radius: 10px;
+            overflow: auto;
+        }
+        .header{
+            font-size: 10pt;
+        }
+        .mailTable{
+            width: 100%;
+            padding: 0 30px;
+            table-layout: fixed;
+            word-break: break-all;
+            margin-top: 20px;
+            margin-bottom: 15px;
+            background-color: white;
+            border-radius: 10px;
+            border-style:hidden;
+            word-break: break-word;
+            font-family: PingFangSC-Regular;
+            font-size: 12px;
+            font-weight: 400;
+        }
+        tr td {
+            padding: 0 15px;
+            border-bottom: 1px solid #E6EAEE;
+            border-right: 1px solid #E6EAEE;
+            height: 33px;
+        }
+        .mailTable tr td.column {
+            width: 13%;
+            font-size: 12px;
+        }
+        .layui-laypage .layui-laypage-count, .layui-laypage .layui-laypage-skip {
+            background-color: #f3f2ef;
+        }
+    </style>
+    <script>
+        var i18nData = {
+            "en": {
+                "title": "Porting Readiness Report",
+                "center": "Cross-platform Code Scanning Center",
+                "report_title": "Porting Readiness Report",
+                "scan_date": "Scan Date",
+                "code_repo": "Code Repository",
+                "code_branch": "Code Branch",
+                "commit_id": "Commit ID",
+                "target_arch": "Target Processor Instruction Set Architecture",
+                "source_dir": "Source Code Directory",
+                "num_scanned_files": "Number of Scanned Files",
+                "lines_of_code": "Lines of Code",
+                "total": "Total",
+                "total_loc": "Total Lines of Code",
+                "scan_results": "Scan Results",
+                "summary": "Summary:",
+                "issues_found": "issues found.",
+                "show_details": "Show all details",
+                "hide_details": "Hide all details",
+                "check_point": "Check Point:",
+                "code_snippet": "Code Snippet:",
+                "description": "Description:",
+                "suggestion": "Code Revision Suggestion:",
+                "name": "NAME:",
+                "upgrade": "UPGRADE:",
+                "package": "PACKAGE:",
+                "type_src": "TYPE-SRC:",
+                "incompatible_libs": "Incompatible Third-party Libraries",
+                "lib_index": "NO.",
+                "lib_name": "Dependency Library Name"
+            },
+            "zh": {
+                "title": "移植就绪报告",
+                "center": "跨平台代码扫描中心",
+                "report_title": "移植就绪报告",
+                "scan_date": "扫描日期",
+                "code_repo": "代码仓库",
+                "code_branch": "代码分支",
+                "commit_id": "Commit ID",
+                "target_arch": "目标处理器指令集架构",
+                "source_dir": "源代码目录",
+                "num_scanned_files": "扫描文件数",
+                "lines_of_code": "代码行数",
+                "total": "总计",
+                "total_loc": "总代码行数",
+                "scan_results": "扫描结果",
+                "summary": "摘要:",
+                "issues_found": "个问题被发现。",
+                "show_details": "显示所有详情",
+                "hide_details": "隐藏所有详情",
+                "check_point": "检查点:",
+                "code_snippet": "代码片段:",
+                "description": "描述:",
+                "suggestion": "代码修改建议:",
+                "name": "名称:",
+                "upgrade": "升级:",
+                "package": "包:",
+                "type_src": "类型-源码:",
+                "incompatible_libs": "不兼容的第三方库",
+                "lib_index": "序号",
+                "lib_name": "依赖库名称"
+            }
+        };
+
+        var currentLang = "{{ locale }}";
+        console.log("Debug: Injected locale is '" + currentLang + "'");
+        // Robust check: handle case-insensitivity (zh-CN vs zh-cn) and variations
+        if (currentLang && currentLang.toLowerCase().trim().indexOf("zh") === 0) {
+            currentLang = "zh";
+        } else {
+            currentLang = "en";
+        }
+
+        window.t = function(key) {
+            return i18nData[currentLang][key] || key;
+        };
+
+        function updateStaticText() {
+            $("[data-i18n]").each(function() {
+                var key = $(this).data("i18n");
+                $(this).text(window.t(key));
+            });
+        }
+
+
+        
+        // Initialize static text on load
+        $(document).ready(function() {
+            updateStaticText();
+            document.title = window.t("title");
+        });
+
+        var all_issues = {{ all_issues | tojson(indent='    ') }}
+        var language_types={{language_types | safe}}
+        var issues = []
+        var bool = true
+        var limit = 20
+        var language = ""
+        var page;
+        var currentPage = 1;
+
+        function expandAll(){
+            bool = true;
+            fillTable((currentPage - 1) * limit, limit);
+        }
+        function collapseAll(){
+            bool = false;
+            fillTable((currentPage - 1) * limit, limit);
+        }
+        function check(){
+            issues = [];
+            $("input:checked").each(function(){
+                for (i = 0; i < all_issues.length; i++) {
+                    if(all_issues[i].language_type.toLowerCase() == language){
+                        for (j = 0; j < all_issues[i].issues.length; j++) {
+                            if(language+all_issues[i].issues[j].issue_type.type == $(this).val()){
+                                issues.push(all_issues[i].issues[j])
+                            }
+                        }
+                    }
+                }
+            });
+            flushPage()
+        }
+        function updateLaypageText() {
+            if (typeof currentLang !== 'undefined' && currentLang !== 'en') return;
+            
+            // Update Count: "共 x 条" -> "Total x items"
+            $('.layui-laypage-count').each(function() {
+                var text = $(this).text();
+                var newText = text.replace(/共\s*(\d+)\s*条/, 'Total $1 items');
+                $(this).text(newText);
+            });
+
+            // Update Limits: "x 条/页" -> "x items/page"
+            $('.layui-laypage-limits option').each(function() {
+                var text = $(this).text();
+                var newText = text.replace(/(\d+)\s*条\/页/, '$1 items/page');
+                $(this).text(newText);
+            });
+
+            // Update Skip: "到第 x 页 确定" -> "Go to page x Confirm"
+            $('.layui-laypage-skip').each(function() {
+                var $this = $(this);
+                $this.contents().filter(function() {
+                    return this.nodeType === 3; // Text nodes
+                }).each(function() {
+                    var text = this.textContent;
+                    if (text.indexOf('到第') !== -1) {
+                        this.textContent = text.replace('到第', 'Go to page ');
+                    }
+                    if (text.indexOf('页') !== -1) {
+                        this.textContent = text.replace('页', '');
+                    }
+                });
+                $this.find('.layui-laypage-btn').text('Confirm');
+            });
+        }
+        layui.use(['laypage', 'element', 'layer'], function () {
+            page = layui.laypage;
+            var element = layui.element;
+            language = language_types[0];
+            issues = [];
+            for (i = 0; i < all_issues.length; i++) {
+                if(all_issues[i].language_type.toLowerCase() == language){
+                    issues = all_issues[i].issues
+                }
+            }
+            element.on('tab(test)', function(data){
+                language = $(this).attr('id')
+                check()
+            });
+            page.render({
+                elem: 'layui',
+                count: issues.length,
+                limit: limit,
+                layout: ['count', 'page', 'limit', 'skip'],
+                theme: '#ff6a00',
+                jump: function (obj, first) {
+                    currentPage = obj.curr;
+                    document.body.scrollTop = document.documentElement.scrollTop = 0;
+                    limit = obj.limit
+                    fillTable((obj.curr - 1) * obj.limit,obj.limit)
+                    updateLaypageText();
+                }
+            });
+        });
+        function flushPage(){
+            page.render({
+                elem: 'layui',
+                count: issues.length,
+                limit: limit,
+                layout: ['count', 'page', 'limit', 'skip'],
+                theme: '#ff6a00',
+                jump: function (obj, first) {
+                    currentPage = obj.curr;
+                    document.body.scrollTop = document.documentElement.scrollTop = 0;
+                    limit = obj.limit
+                    fillTable((obj.curr - 1) * obj.limit,obj.limit)
+                }
+            });
+        }
+
+        function fillTable(num,limit) {
+            $("#data").html('');
+            var info = '';
+            for (i = 0; i < issues.length; i++) {
+                if( i >= num && i < num+limit ){
+                    info += '<div class="card '+issues[i].issue_type.type+' "><div class="card-header" id="'+i+'">'
+                info += '<button class="btn btn-block text-left" type="button" data-toggle="collapse" data-target="#show'+i+'" aria-expanded="false" aria-controls="'+i+'">'
+                if (issues[i].filename != null && issues[i].filename != ''){
+                    info += '<pre class="header">'+issues[i].filename
+                    if (issues[i].lineno != null && issues[i].lineno != ''){
+                        info += ':'+issues[i].lineno
+                    }
+                } else {
+                    info += '<pre class="header"> '
+                }
+                info += '</pre></button></div>'
+                if (bool){
+                    info += '<div id="show'+i+'" class="collapse show" aria-labelledby="'+i+'" >'
+                } else {
+                    info += '<div id="show'+i+'" class="collapse" aria-labelledby="'+i+'" >'
+                }
+                info += '<div class="card-body">'
+                if (issues[i].checkpoint != null && issues[i].checkpoint != ''){
+                    info += '<pre class="title">' + window.t("check_point") + ' </pre><pre>'+issues[i].checkpoint+'</pre><br/>'
+                }
+                if (issues[i].snippet != null && issues[i].snippet != ''){
+                    info += '<pre class="title">' + window.t("code_snippet") + ' </pre><pre><div class="textarea" contentEditable="true">'+issues[i].snippet+'</div></pre><br/></pre>'
+                }
+                if (issues[i].description != null && issues[i].description != ''){
+                    info += '<pre class="title">\n' + window.t("description") + ' </pre><pre class="description">'+issues[i].description+'</pre>'
+                }
+                if (issues[i].advice != null){
+                    info += '<pre class="title">\n' + window.t("suggestion") + ' </pre><pre class="description">' + window.t("name") + '  '+issues[i].advice.NAME+'\n' + window.t("upgrade") + '  '+issues[i].advice.UPGRADE+'\n' + window.t("package") + '  '+issues[i].advice.PACKAGE+'\n' + window.t("type_src") + '  '+issues[i].advice['TYPE-SRC']+'</pre>'
+                }
+                info += '</div></div></div>'
+                }
+            }
+            $("#data").append(info);
+        }
+
+        // Check for incompatible libraries and populate section
+        $(document).ready(function() {
+            var incompatibleLibs = [];
+            for (var i = 0; i < all_issues.length; i++) {
+                var langGroup = all_issues[i];
+                if (langGroup.issues && langGroup.issues.length > 0) {
+                    for (var j = 0; j < langGroup.issues.length; j++) {
+                        var issue = langGroup.issues[j];
+                        if (issue.issue_type && issue.issue_type.type === 'ArchSpecificLibraryIssue') {
+                            // Try to extract lib name from description
+                            // Format: 'architecture-specific library is not available: lib{libname}'
+                            var libName = "Unknown";
+                            if (issue.description) {
+                                // Try to match 'lib' followed by chars, preceded by colon or space
+                                var libName = "Unknown";
+
+                                if (issue.lib_name) {
+                                    libName = issue.lib_name;
+                                } else {
+                                    // Using regex to find the library name after 'lib' prefix
+                                    var match = issue.description.match(/lib([a-zA-Z0-9_\-\.]+)/);
+                                    if (match && match.length > 1) {
+                                        libName = match[1];
+                                    } else {
+                                         // Fallback: split by colon if present
+                                         var parts = issue.description.split(/[:：]/);
+                                         if (parts.length > 1) {
+                                             // take the part after colon
+                                             var afterColon = parts[parts.length - 1].trim(); 
+                                             // if it starts with lib
+                                             if (afterColon.startsWith('lib')) {
+                                                 libName = afterColon.substring(3).trim().split(' ')[0];
+                                             } else {
+                                                 libName = afterColon.split(' ')[0];
+                                             }
+                                         } else {
+                                            // Just take the description if parsing fails
+                                            libName = issue.description;
+                                         }
+                                    }
+                                }
+                            }
+
+                            var isDuplicate = false;
+                            for (var k = 0; k < incompatibleLibs.length; k++) {
+                                if (incompatibleLibs[k].name === libName) {
+                                    isDuplicate = true;
+                                    break;
+                                }
+                            }
+
+                            if (!isDuplicate) {
+                                incompatibleLibs.push({
+                                    name: libName,
+                                    issue: issue
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (incompatibleLibs.length > 0) {
+                var tableBody = "";
+                for (var k = 0; k < incompatibleLibs.length; k++) {
+                    tableBody += "<tr>";
+                    tableBody += "<td style='text-align: center;'>" + (k + 1) + "</td>";
+                    tableBody += "<td>" + incompatibleLibs[k].name + "</td>";
+                    tableBody += "</tr>";
+                }
+                $("#incompatible-libs-body").html(tableBody);
+                $("#incompatible-libs-section").show();
+            }
+        });
+    </script>
+</head>
+<body>
+<header>
+    <div style="float: right; padding-right: 34px">
+
+        <!-- <img class="logo" src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iMTkiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGcgZmlsbD0iI0ZFNkEwMCIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBkPSJNOS40NCAxMC4xMjNoOS40MzJWNy45OTZIOS40NHoiLz48cGF0aCBkPSJNMjMuNTk4LjI4aC02LjI0MWwxLjUwNiAyLjEzIDQuNTUgMS4zOTVhMS45NjggMS45NjggMCAwMTEuMzc0IDEuODg5djYuODI1YTEuOTY4IDEuOTY4IDAgMDEtMS4zNzQgMS44ODlsLTQuNTUgMS4zOTQtMS41MDYgMi4xM2g2LjI0YTQuNzE0IDQuNzE0IDAgMDA0LjcxNS00LjcxM1Y0Ljk5NEE0LjcxNCA0LjcxNCAwIDAwMjMuNTk4LjI4TTQuNzE0LjI4aDYuMjQxTDkuNDUgMi40MSA0LjkgMy44MDVhMS45NjkgMS45NjkgMCAwMC0xLjM3NCAxLjg4OXY2LjgyNUExLjk2OSAxLjk2OSAwIDAwNC45IDE0LjQwOGw0LjU1IDEuMzk0IDEuNTA2IDIuMTNoLTYuMjRBNC43MTQgNC43MTQgMCAwMTAgMTMuMjJWNC45OTRBNC43MTQgNC43MTQgMCAwMTQuNzE0LjI4bTM2LjM5MyAxMS44MTJoLjk2VjYuMzNoLS45NnY1Ljc2MnptLTEuODI0IDEuODI0aDQuNjA3di05LjQxaC00LjYwN3Y5LjQxem0tNi43MTggMy41NDloMS44MjRWMi41NzJoMS44NzFsLTEuMTI1IDQuOTc0VjkuMzdoMS4xMjV2My45NzVhLjQ5LjQ5IDAgMDEtLjQ5LjQ3MWgtLjQyMnYxLjgyNWguOTEyYTEuODI1IDEuODI1IDAgMDAxLjgyNC0xLjgyNXYtNi4yN0gzNi45NmwxLjEyNS00Ljk3NFYuNzQ4aC01LjUxOXYxNi43MTd6Ii8+PHBhdGggZD0iTTM4LjgzIDIuNTcyaDYuMjU4djExLjU2NWMwIC44MzMtLjY3NSAxLjUwOC0xLjUwOCAxLjUwOGgtMS4zODh2MS44MmgxLjg2N2EyLjg0OCAyLjg0OCAwIDAwMi44NDgtMi44NDhWMi41NzJoLjY2M1YuNzQ4aC04Ljc0djEuODI0em0yNy40OTEuMTYxaDEyLjk2M1YuOTFINjYuMzJ6TTc5Ljk1NyA5LjM3VjcuNTQ0SDY1LjY0OFY5LjM3aDMuNjEzbC0yLjg0NiA2LjI3MnYxLjgyNEg3OC42MmEuOTEyLjkxMiAwIDAwLjkxMi0uOTEyLjk1Ni45NTYgMCAwMC0uMDkyLS4zOTNsLTEuNTQyLTMuMzgzaC0yLjAwNWwxLjMxMSAyLjg2NEg2OC40MmwyLjg0Ni02LjI3Mmg4LjY5ek01MS45NTYgOC4yNjRoMy43NDZWNi4zM2gtMy43NDZ2MS45MzR6bTAtMy43NThoMy43NDZWMi41NzJoLTMuNzQ2djEuOTM0em01LjU3IDBoMy43NDVWMi41NzJoLTMuNzQ1djEuOTM0em0wIDMuNzU4aDMuNzQ1VjYuMzNoLTMuNzQ1djEuOTM0em0wIDcuMzc3di0xLjkzNGg1Ljc4N3YtMS44MjRoLTUuNzg3di0xLjc5NWg1LjU2OVYuNzQ4SDUwLjEzMnY5LjM0aDUuNTd2MS43OTVoLTUuNzg4djEuODI0aDUuNzg4djEuOTM0aC02LjI0M3YxLjgyNGgxNC4zMDlWMTUuNjRoLTYuMjQyeiIvPjwvZz48L3N2Zz4="> -->
+        <span style="color: #4D4D4D; padding: 0 4px;">|</span>
+        <span class="icon-font" data-i18n="center"> 跨平台代码扫描中心</span>
+    </div>
+    <div style="line-height: 48px;padding-left: 34px;">
+        <span class="name">{{ arch.upper() }} <span data-i18n="report_title">Porting Readiness Report</span></span>
+    </div>
+</header>
+<section class="root">
+    <table class="mailTable" cellspacing="0" cellpadding="0">
+        <colgroup>
+            <col width="14%">
+            </col>
+            <col width="15%">
+            </col>
+            <col class="28%">
+            </col>
+            <col width="15%">
+            </col>
+            <col class="28%">
+            </col>
+        </colgroup>
+        <tbody>
+        <tr>
+            <td class="column" data-i18n="scan_date">Scan Date</td>
+            <td colspan="4">{{ date }}</td>
+        </tr>
+        {% if git_repo %}
+        <tr>
+            <td class="column" data-i18n="code_repo">Code Repository</td>
+            <td colspan="4">{{ git_repo }}</td>
+        </tr>
+        {% endif %}
+        {% if branch %}
+        <tr>
+            <td class="column" data-i18n="code_branch">Code Branch</td>
+            <td colspan="4">{{ branch }}</td>
+        </tr>
+        {% endif %}
+        {% if commit %}
+        <tr>
+            <td class="column" data-i18n="commit_id">Commit ID</td>
+            <td colspan="4">{{ commit }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td class="column" data-i18n="target_arch">Target Processor Instruction Set Architecture</td>
+            <td colspan="4">{{ arch.upper() }}</td>
+        </tr>
+        <tr>
+            <td class="column" data-i18n="source_dir">Source Code Directory</td>
+            <td colspan="4">{{ root_directory }}</td>
+        </tr>
+        <tr>
+            <td class="column" rowspan="{{ file_summary | length + 2}}" data-i18n="num_scanned_files">Number of Scanned Files</td>
+        </tr>
+
+        {% for key,value in file_summary.items() %}
+        <tr>
+            <td>{{value.fileName}}</td>
+            <td>{{value.count}}</td>
+            <td data-i18n="lines_of_code">Lines of Code</td>
+            <td>{{value.loc}}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+            <td data-i18n="total">Total </td>
+            <td>{{file_sum_count}}</td>
+            <td data-i18n="total_loc">Total Lines of Code</td>
+            <td>{{file_sum_loc}}</td>
+        </tr>
+        </tbody>
+    </table>
+</section>
+<section id="incompatible-libs-section" style="display: none;">
+    <h2 style="margin-block-start: 0px;font-family: PingFangSC-Medium;" data-i18n="incompatible_libs">Incompatible Third-party Libraries</h2>
+    <table class="mailTable" cellspacing="0" cellpadding="0">
+        <colgroup>
+            <col width="10%"></col>
+            <col width="90%"></col>
+        </colgroup>
+        <thead>
+            <tr>
+                <td style="text-align: center; font-weight: bold;" data-i18n="lib_index">Index</td>
+                <td style="font-weight: bold;" data-i18n="lib_name">Dependency Library Name</td>
+            </tr>
+        </thead>
+        <tbody id="incompatible-libs-body">
+            <!-- Content will be populated by JS -->
+        </tbody>
+    </table>
+</section>
+<section class="advice">
+    <h2 style="margin-block-start: 0px;font-family: PingFangSC-Medium;" data-i18n="scan_results">Scan Results</h2>
+    <div class="layui-tab" lay-filter="test" style="margin-bottom: 0px;">
+        <ul style="margin-bottom:0px" class="layui-tab-title">
+            {% for language_type in language_types %}
+            {% if loop.first %}
+            {% if language_type == 'cpp' %}
+            <li id="{{language_type}}" class="layui-this">C/CPP</li>
+            {% elif language_type == 'java' %}
+            <li id="{{language_type}}" class="layui-this">Java</li>
+            {% elif language_type == 'go' %}
+            <li id="{{language_type}}" class="layui-this">Go</li>
+            {% elif language_type == 'python' %}
+            <li id="{{language_type}}" class="layui-this">Python</li>
+            {% elif language_type == 'rust' %}
+            <li id="{{language_type}}" class="layui-this">Rust</li>
+            {% elif language_type == 'asm' %}
+            <li id="{{language_type}}" class="layui-this">ASM</li>
+            {% elif language_type == 'nodejs' %}
+            <li id="{{language_type}}" class="layui-this">NodeJs</li>
+            {% endif %}
+            {% else %}
+            {% if language_type == 'cpp' %}
+            <li id="{{language_type}}">C/CPP</li>
+            {% elif language_type == 'java' %}
+            <li id="{{language_type}}">Java</li>
+            {% elif language_type == 'go' %}
+            <li id="{{language_type}}">Go</li>
+            {% elif language_type == 'python' %}
+            <li id="{{language_type}}">Python</li>
+            {% elif language_type == 'rust' %}
+            <li id="{{language_type}}">Rust</li>
+            {% elif language_type == 'asm' %}
+            <li id="{{language_type}}">ASM</li>
+            {% elif language_type == 'nodejs' %}
+            <li id="{{language_type}}">NodeJs</li>
+            {% endif %}
+            {% endif %}
+            {% endfor %}
+        </ul>
+        <div style="padding-bottom: 0px;" class="layui-tab-content">
+            {% for language_type in language_types %}
+            {% if loop.first %}
+            <div class="layui-tab-item layui-show">
+                {% for data in all_issues %}
+                {% if data.language_type.lower() == language_type %}
+                {% set arch_lib_count = data.issue_summary.ArchSpecificLibraryIssue.count if data.issue_summary.ArchSpecificLibraryIssue else 0 %}
+                <span style="font-weight: bold;font-size: 10pt;" data-i18n="summary">Summary: </span><span>{{ data.total_issue_count - arch_lib_count }} <span data-i18n="issues_found">issues found.</span></span><br />
+                <table class="mailTable" cellspacing="0" cellpadding="0">
+                    <colgroup>
+                        <col width="5%">
+                        </col>
+                        <col width="25%">
+                        </col>
+                        <col width="10%">
+                        </col>
+                        <col width="60%">
+                        </col>
+                    </colgroup>
+                    <tbody>
+                    {% for key,value in data.issue_summary.items() %}
+                    {% if key != 'OtherIssue' and key != 'Error' and key != 'ArchSpecificLibraryIssue' %}
+                    <tr>
+                        <td><input type="checkbox" onclick="check()" value="{{language_type+key}}" checked {{ 'disabled' if value.count==0 else '' }}></td>
+                        <td>{{key}}</td>
+                        <td>{{value.count}}</td>
+                        <td>{{ value['des-zh'] if locale and locale.startswith('zh') else value['des'] }}</td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                    {% if data.issue_summary.OtherIssue != null %}
+                    <tr>
+                        <td><input type="checkbox" onclick="check()" value="{{language_type+'OtherIssue'}}" checked {{ 'disabled' if data.issue_summary.OtherIssue.count==0 else '' }}></td>
+                        <td>OtherIssue</td>
+                        <td>{{data.issue_summary.OtherIssue.count}}</td>
+                        <td>{{ data.issue_summary.OtherIssue['des-zh'] if locale and locale.startswith('zh') else data.issue_summary.OtherIssue['des'] }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if data.issue_summary.Error != null %}
+                    <tr>
+                        <td><input type="checkbox" onclick="check()" value="{{language_type+'Error'}}" checked {{ 'disabled' if data.issue_summary.Error.count==0 else '' }}></td>
+                        <td>Error</td>
+                        <td>{{data.issue_summary.Error.count}}</td>
+                        <td>{{ data.issue_summary.Error['des-zh'] if locale and locale.startswith('zh') else data.issue_summary.Error['des'] }}</td>
+                    </tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="layui-tab-item">
+                {% for data in all_issues %}
+                {% if data.language_type.lower() == language_type %}
+                {% set arch_lib_count = data.issue_summary.ArchSpecificLibraryIssue.count if data.issue_summary.ArchSpecificLibraryIssue else 0 %}
+                <span style="font-weight: bold;font-size: 10pt;" data-i18n="summary">Summary: </span><span>{{ data.total_issue_count - arch_lib_count }} <span data-i18n="issues_found">issues found.</span></span><br />
+                <table class="mailTable" cellspacing="0" cellpadding="0">
+                    <colgroup>
+                        <col width="5%">
+                        </col>
+                        <col width="25%">
+                        </col>
+                        <col width="10%">
+                        </col>
+                        <col width="60%">
+                        </col>
+                    </colgroup>
+                    <tbody>
+                    {% for key,value in data.issue_summary.items() %}
+                    {% if key != 'OtherIssue' and key != 'Error' and key != 'ArchSpecificLibraryIssue' %}
+                    <tr>
+                        <td><input type="checkbox" onclick="check()" value="{{language_type+key}}" checked {{ 'disabled' if value.count==0 else '' }}></td>
+                        <td>{{key}}</td>
+                        <td>{{value.count}}</td>
+                        <td>{{ value['des-zh'] if locale and locale.startswith('zh') else value['des'] }}</td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                    {% if data.issue_summary.OtherIssue != null %}
+                    <tr>
+                        <td><input type="checkbox" onclick="check()" value="{{language_type+'OtherIssue'}}" checked {{ 'disabled' if data.issue_summary.OtherIssue.count==0 else '' }}></td>
+                        <td>OtherIssue</td>
+                        <td>{{data.issue_summary.OtherIssue.count}}</td>
+                        <td>{{ data.issue_summary.OtherIssue['des-zh'] if locale and locale.startswith('zh') else data.issue_summary.OtherIssue['des'] }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if data.issue_summary.Error != null %}
+                    <tr>
+                        <td><input type="checkbox" onclick="check()" value="{{language_type+'Error'}}" checked {{ 'disabled' if data.issue_summary.Error.count==0 else '' }}></td>
+                        <td>Error</td>
+                        <td>{{data.issue_summary.Error.count}}</td>
+                        <td>{{ data.issue_summary.Error['des-zh'] if locale and locale.startswith('zh') else data.issue_summary.Error['des'] }}</td>
+                    </tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    <span style="padding: 0 0 0 10px;"><a href="javascript:void(0)" onclick="expandAll()" class="operation" data-i18n="show_details">Show all details</a> / <a href="javascript:void(0)" onclick="collapseAll()" class="operation" data-i18n="hide_details">Hide
+                    all details</a></span>
+    <div class="accordion">
+        <div id="data"></div>
+        <div id="layui"></div>
+    </div>
+</section>
+</body>
+</html>

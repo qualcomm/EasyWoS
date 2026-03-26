@@ -1,0 +1,18 @@
+#!/bin/sh
+
+execute()
+{
+    echo "$*"
+    eval "$*"
+}
+
+argv='--output ./memory_model_test.json'
+# argv+=' --arch sw64'
+# argv+=' --arch arm64'
+argv+=' --arch x86_64'
+argv+=' --march dhyana'
+argv+=' ./memory_model_test'
+argv+=" $@"
+
+execute python3 cpp_scanner.py "$argv"
+

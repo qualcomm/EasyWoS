@@ -1,32 +1,29 @@
-**After repository creation:**
-- [ ] Update this `README.md`. Update the Project Name, description, and all sections. Remove this checklist.
-- [ ] If required, update `LICENSE.txt` and the License section with your project's approved license
-- [ ] Search this repo for "REPLACE-ME" and update all instances accordingly
-- [ ] Update `CONTRIBUTING.md` as needed
-- [ ] Review the workflows in `.github/workflows`, updating as needed. See https://docs.github.com/en/actions for information on what these files do and how they work.
-- [ ] Review and update the suggested Issue and PR templates as needed in `.github/ISSUE_TEMPLATE` and `.github/PULL_REQUEST_TEMPLATE`
-
 # Project Name
 
-*\<update with your project name and a short description\>*
+EasyWoS
 
-Project that does ... implemented in ... runs on Qualcomm® *\<processor\>*
+Project which helps users migrate apps from x86-64 to windows on arm64 runs on Qualcomm® *\<Snapdragon X Elite\>*.
 
 ## Branches
 
 **main**: Primary development branch. Contributors should develop submissions based on this branch, and submit pull requests to this branch.
 
 ## Requirements
+Only docker is required, and all the dependent software are listed in the dockerfile, and we package them into a tar file. So you can load it from the <xxx.tar> in the release page.
 
-List requirements to run the project, how to install them, instructions to use docker container, etc...
+### load docker image to your local PC
+```bash
+// You can find the xxx.tar in release page
+docker load -i <xxx.tar>
+```
 
-## Installation Instructions
-
-How to install the software itself.
-
-## Usage
-
-Describe how to use the project.
+### start the docker container
+```bash
+# -v <host volume path>:<container volume path>
+# use docker images command to find your <image-id>
+# the name easywos-container can be replaced with anything you like
+docker run -itd -p 8888:8888 -v /local/mnt/workspace/zenghao/workspace:/app/workspace --name easywos-container <image-id>
+```
 
 ## Development
 
@@ -38,10 +35,10 @@ How to contact maintainers. E.g. GitHub Issues, GitHub Discussions could be indi
 
 * [Report an Issue on GitHub](../../issues)
 * [Open a Discussion on GitHub](../../discussions)
-* [E-mail us](mailto:REPLACE-ME@qti.qualcomm.com) for general questions
+* [E-mail us](mailto:haozen@qti.qualcomm.com) for general questions
 
 ## License
 
-*\<update with your project name and license\>*
+*\<EasyWoS with BSD-3-clause License\>*
 
-*\<REPLACE-ME\>* is licensed under the [BSD-3-clause License](https://spdx.org/licenses/BSD-3-Clause.html). See [LICENSE.txt](LICENSE.txt) for the full license text.
+*\<EasyWoS\>* is licensed under the [BSD-3-clause License](https://spdx.org/licenses/BSD-3-Clause.html). See [LICENSE.txt](LICENSE.txt) for the full license text.
