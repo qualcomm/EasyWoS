@@ -9,14 +9,13 @@ Project which helps users migrate apps from x86-64 to windows on arm64 runs on Q
 **main**: Primary development branch. Contributors should develop submissions based on this branch, and submit pull requests to this branch.
 
 ## Requirements
-Only docker is required, and all the dependent software are listed in the dockerfile, and we package them into a tar file. So you can load it from the <xxx.tar> in the release page.
+Only docker is required, and all the dependent software are listed in the dockerfile.
 
-### load docker image to your local PC
+### build docker image
 ```bash
-// You can find the xxx.tar in release page
-docker load -i <xxx.tar>
+cd EasyWoS
+docker build -t easywos:latest .
 ```
-
 ### start the docker container
 ```bash
 # -v <host volume path>:<container volume path>
