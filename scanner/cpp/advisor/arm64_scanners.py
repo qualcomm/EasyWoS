@@ -1,3 +1,9 @@
+"""
+Copyright (c) 2026 Qualcomm Technologies, Inc.
+All Rights Reserved.
+Qualcomm Technologies, Inc. Confidential and Proprietary.
+Not a Contribution. Notifications and licenses are retained for attribution purposes only.
+"""
 from .arm64_asm_source_scanner import Arm64AsmSourceScanner
 from .arm64_config_guess_scanner import Arm64ConfigGuessScanner
 from .arm64_makefile_scanner import Arm64MakefileScanner

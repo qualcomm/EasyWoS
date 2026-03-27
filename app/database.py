@@ -1,3 +1,9 @@
+"""
+Copyright (c) 2026 Qualcomm Technologies, Inc.
+All Rights Reserved.
+Qualcomm Technologies, Inc. Confidential and Proprietary.
+Not a Contribution. Notifications and licenses are retained for attribution purposes only.
+"""
 from asyncio import current_task
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.ext.asyncio import AsyncSession

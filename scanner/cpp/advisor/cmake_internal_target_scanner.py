@@ -1,4 +1,10 @@
 """
+Copyright (c) 2026 Qualcomm Technologies, Inc.
+All Rights Reserved.
+Qualcomm Technologies, Inc. Confidential and Proprietary.
+Not a Contribution. Notifications and licenses are retained for attribution purposes only.
+"""
+"""
 SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2023 Qualcomm Innovation Center, Inc.
 All rights reserved.

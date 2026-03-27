@@ -1,3 +1,9 @@
+"""
+Copyright (c) 2026 Qualcomm Technologies, Inc.
+All Rights Reserved.
+Qualcomm Technologies, Inc. Confidential and Proprietary.
+Not a Contribution. Notifications and licenses are retained for attribution purposes only.
+"""
 from sanic.views import HTTPMethodView
 from sanic_ext import openapi
 from sanic_ext.extensions.openapi.definitions import RequestBody
