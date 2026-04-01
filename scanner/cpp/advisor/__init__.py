@@ -1,8 +1,8 @@
 """
+SPDX-License-Identifier: Apache-2.0
+
 Copyright (c) 2026 Qualcomm Technologies, Inc.
 All Rights Reserved.
-Qualcomm Technologies, Inc. Confidential and Proprietary.
-Not a Contribution. Notifications and licenses are retained for attribution purposes only.
 """
 __project__ = 'cpp porting-advisor'
 __target__ = 'C/C++'
