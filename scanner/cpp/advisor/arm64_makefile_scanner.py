@@ -86,15 +86,15 @@ class Arm64MakefileScanner(MakefileScanner):
     # system libs to exclude from third party libs check
     SYSTEM_LIBS = {'m', 'pthread', 'rt', 'dl', 'atomic', 'z'}
 
-    # Load Windows ARM64 supported ports from file
-    WOS_SUPPORTED_LIBS = {}
-    _ports_file = os.path.join(os.path.dirname(__file__), 'windows_arm64_ports.txt')
+    # Load Windows ARM64 unsupported ports from file
+    WOS_UNSUPPORTED_LIBS = {}
+    _ports_file = os.path.join(os.path.dirname(__file__), 'windows_arm64_unsupported_libs.txt')
     if os.path.exists(_ports_file):
         with open(_ports_file, 'r') as f:
             for line in f:
                 l = line.strip()
                 if l:
-                    WOS_SUPPORTED_LIBS[l] = True
+                    WOS_UNSUPPORTED_LIBS[l] = True
 
     def __init__(self, output_format, arch, march, locale='en-US', external_targets=None):
         self.output_format = output_format
@@ -285,7 +285,7 @@ class Arm64MakefileScanner(MakefileScanner):
                                                    locale=self.locale))
                 
         # issue detected, unsupported lib on WOS
-        if thirdlibname not in self.WOS_SUPPORTED_LIBS:
+        if thirdlibname in self.WOS_UNSUPPORTED_LIBS:
             issues.append(ArchSpecificLibraryIssue(filename,
                                                    lineno,
                                                    lib_name=thirdlibname,

@@ -27,15 +27,15 @@ class Arm64VcxprojScanner(Scanner):
         'bcrypt', 'ncrypt', 'imagehlp', 'dbghelp', 'normaliz', 'urlmon', 'wininet'
     }
 
-    # Load Windows ARM64 supported ports from file
-    WOS_SUPPORTED_LIBS = {}
-    _ports_file = os.path.join(os.path.dirname(__file__), 'windows_arm64_ports.txt')
+    # Load Windows ARM64 unsupported ports from file
+    WOS_UNSUPPORTED_LIBS = {}
+    _ports_file = os.path.join(os.path.dirname(__file__), 'windows_arm64_unsupported_libs.txt')
     if os.path.exists(_ports_file):
         with open(_ports_file, 'r') as f:
             for line in f:
                 l = line.strip().lower()
                 if l:
-                    WOS_SUPPORTED_LIBS[l] = True
+                    WOS_UNSUPPORTED_LIBS[l] = True
 
     # Regex to find .lib files
     # Matches filenames ending in .lib, allowing alphanumeric, underscore, hyphen, and dot.
@@ -96,8 +96,8 @@ class Arm64VcxprojScanner(Scanner):
                                                            locale=self.locale))
                     continue
 
-                # Check if supported
-                if lib_name not in self.WOS_SUPPORTED_LIBS:
+                # Check if unsupported on Windows on ARM64
+                if lib_name in self.WOS_UNSUPPORTED_LIBS:
                     issues.append(ArchSpecificLibraryIssue(filename=filename,
                                                            lineno=lineno,
                                                            lib_name=lib_name,
