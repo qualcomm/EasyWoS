@@ -197,11 +197,14 @@ const ScanPage = () => {
             filePath = values.repoUrl;
         }
 
+        const browserLocale = navigator.language || (navigator.languages && navigator.languages[0]) || 'en-US';
+
         const payload = {
             name: values.taskName,
             description: values.description,
             language: values.language === 'c_cpp_asm' ? 'c/c++/asm' : values.language,
             arch: values.targetISA,
+            locale: browserLocale,
             build_tool: values.buildTool,
             method: values.method,
             file_path: filePath,
