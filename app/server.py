@@ -18,7 +18,8 @@ import settings
 
 def create_app() -> Sanic:
     app = Sanic('EasyWoS')
-    app.static('/', 'dist')
+    app.static('/', 'dist', name='static_dist')
+    app.static('/vendor', 'static/vendor', name='static_vendor')
     app.ext.openapi.add_security_scheme(
         "token",
         "http",
