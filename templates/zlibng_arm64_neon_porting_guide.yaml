@@ -1,0 +1,1067 @@
+meta:
+  root_directory: ~/workspace/zlib-ng
+  arch: aarch64
+  total_issues: 28
+  issue_summary:
+    x64_neon_port_required: 28
+issues:
+- id: ISSUE-0001
+  file: arch/x86/adler32_avx512.c
+  code_range: 18-47
+  category: x64_neon_port_required
+  arm64_target: adler32_neon
+  arm64_file: arch/arm/adler32_neon.c
+  description: |-
+    AVX512 implementation of Adler-32 checksum. Must be ported to adler32_neon.
+    Processes 64 bytes/iteration. adler32_avx512 is a thin wrapper over adler32_copy_impl.
+    Key intrinsic mappings:
+      _mm512_sad_epu8         -> vaddlvq_u8 / vpaddlq_u8
+      _mm512_maddubs_epi16    -> vmull_u8 / vmlal_u8
+      _mm512_madd_epi16       -> vmull_s16 / vpaddlq_s16
+      _mm512_reduce_add_epu32 -> vaddvq_u32
+  context: |-
+    Z_FORCEINLINE static uint32_t adler32_copy_impl(uint32_t adler, uint8_t *dst, const uint8_t *src, size_t len, const int COPY) {
+        uint32_t adler0, adler1;
+        adler1 = (adler >> 16) & 0xffff;
+        adler0 = adler & 0xffff;
+
+    rem_peel:
+        if (len < 64) {
+            /* This handles the remaining copies, just call normal adler checksum after this */
+            if (COPY && len) {
+                __mmask64 storemask = (0xFFFFFFFFFFFFFFFFUL >> (64 - len));
+                __m512i copy_vec = _mm512_maskz_loadu_epi8(storemask, src);
+                _mm512_mask_storeu_epi8(dst, storemask, copy_vec);
+            }
+
+            return adler32_avx2(adler, src, len);
+        }
+
+        __m512i vbuf, vs1_0, vs3;
+
+        const __m512i dot2v = _mm512_set_epi8(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                                              20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+                                              38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+                                              56, 57, 58, 59, 60, 61, 62, 63, 64);
+        const __m512i dot3v = _mm512_set1_epi16(1);
+        const __m512i zero = _mm512_setzero_si512();
+
+        while (len >= 64) {
+            __m512i vs1 = _mm512_zextsi128_si512(_mm_cvtsi32_si128(adler0));
+            __m512i vs2 = _mm512_zextsi128_si512(_mm_cvtsi32_si128(adler1));
+            vs1_0 = vs1;
+- id: ISSUE-0002
+  file: arch/x86/adler32_avx512.c
+  code_range: 48-77
+  category: x64_neon_port_required
+  arm64_target: adler32_neon
+  arm64_file: arch/arm/adler32_neon.c
+  description: |-
+    AVX512 implementation of Adler-32 checksum. Must be ported to adler32_neon.
+    Processes 64 bytes/iteration. adler32_avx512 is a thin wrapper over adler32_copy_impl.
+    Key intrinsic mappings:
+      _mm512_sad_epu8         -> vaddlvq_u8 / vpaddlq_u8
+      _mm512_maddubs_epi16    -> vmull_u8 / vmlal_u8
+      _mm512_madd_epi16       -> vmull_s16 / vpaddlq_s16
+      _mm512_reduce_add_epu32 -> vaddvq_u32
+  context: |2-
+            vs3 = _mm512_setzero_si512();
+
+            size_t k = ALIGN_DOWN(MIN(len, NMAX), 64);
+            len -= k;
+
+            while (k >= 64) {
+                /*
+                   vs1 = adler + sum(c[i])
+                   vs2 = sum2 + 64 vs1 + sum( (64-i+1) c[i] )
+                */
+                vbuf = _mm512_loadu_si512(src);
+
+                if (COPY) {
+                    _mm512_storeu_si512(dst, vbuf);
+                    dst += 64;
+                }
+
+                src += 64;
+                k -= 64;
+
+                __m512i vs1_sad = _mm512_sad_epu8(vbuf, zero);
+                __m512i v_short_sum2 = _mm512_maddubs_epi16(vbuf, dot2v);
+                vs1 = _mm512_add_epi32(vs1_sad, vs1);
+                vs3 = _mm512_add_epi32(vs3, vs1_0);
+                __m512i vsum2 = _mm512_madd_epi16(v_short_sum2, dot3v);
+                vs2 = _mm512_add_epi32(vsum2, vs2);
+                vs1_0 = vs1;
+            }
+
+            vs3 = _mm512_slli_epi32(vs3, 6);
+- id: ISSUE-0003
+  file: arch/x86/adler32_avx512.c
+  code_range: 78-96
+  category: x64_neon_port_required
+  arm64_target: adler32_neon
+  arm64_file: arch/arm/adler32_neon.c
+  description: |-
+    AVX512 implementation of Adler-32 checksum. Must be ported to adler32_neon.
+    Processes 64 bytes/iteration. adler32_avx512 is a thin wrapper over adler32_copy_impl.
+    Key intrinsic mappings:
+      _mm512_sad_epu8         -> vaddlvq_u8 / vpaddlq_u8
+      _mm512_maddubs_epi16    -> vmull_u8 / vmlal_u8
+      _mm512_madd_epi16       -> vmull_s16 / vpaddlq_s16
+      _mm512_reduce_add_epu32 -> vaddvq_u32
+  context: |2-
+            vs2 = _mm512_add_epi32(vs2, vs3);
+
+            adler0 = partial_hsum(vs1) % BASE;
+            adler1 = _mm512_reduce_add_epu32(vs2) % BASE;
+        }
+
+        adler = adler0 | (adler1 << 16);
+
+        /* Process tail (len < 64). */
+        if (len) {
+            goto rem_peel;
+        }
+
+        return adler;
+    }
+
+    Z_INTERNAL uint32_t adler32_avx512(uint32_t adler, const uint8_t *src, size_t len) {
+        return adler32_copy_impl(adler, NULL, src, len, 0);
+    }
+- id: ISSUE-0004
+  file: arch/x86/adler32_avx512.c
+  code_range: 18-47
+  category: x64_neon_port_required
+  arm64_target: adler32_copy_neon
+  arm64_file: arch/arm/adler32_neon.c
+  description: |-
+    AVX512 Adler-32 checksum with simultaneous memory copy. Must be ported to adler32_copy_neon.
+    Shares adler32_copy_impl with ISSUE-0001; COPY=1 additionally writes src to dst.
+    Tail handling (len < 64) uses masked load/store:
+      _mm512_maskz_loadu_epi8 + _mm512_mask_storeu_epi8
+    ARM64 equivalent: vld1q_u8 + vst1q_u8; tail via byte-by-byte or predicated load/store.
+  context: |-
+    Z_FORCEINLINE static uint32_t adler32_copy_impl(uint32_t adler, uint8_t *dst, const uint8_t *src, size_t len, const int COPY) {
+        uint32_t adler0, adler1;
+        adler1 = (adler >> 16) & 0xffff;
+        adler0 = adler & 0xffff;
+
+    rem_peel:
+        if (len < 64) {
+            /* This handles the remaining copies, just call normal adler checksum after this */
+            if (COPY && len) {
+                __mmask64 storemask = (0xFFFFFFFFFFFFFFFFUL >> (64 - len));
+                __m512i copy_vec = _mm512_maskz_loadu_epi8(storemask, src);
+                _mm512_mask_storeu_epi8(dst, storemask, copy_vec);
+            }
+
+            return adler32_avx2(adler, src, len);
+        }
+
+        __m512i vbuf, vs1_0, vs3;
+
+        const __m512i dot2v = _mm512_set_epi8(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                                              20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+                                              38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+                                              56, 57, 58, 59, 60, 61, 62, 63, 64);
+        const __m512i dot3v = _mm512_set1_epi16(1);
+        const __m512i zero = _mm512_setzero_si512();
+
+        while (len >= 64) {
+            __m512i vs1 = _mm512_zextsi128_si512(_mm_cvtsi32_si128(adler0));
+            __m512i vs2 = _mm512_zextsi128_si512(_mm_cvtsi32_si128(adler1));
+            vs1_0 = vs1;
+- id: ISSUE-0005
+  file: arch/x86/adler32_avx512.c
+  code_range: 48-77
+  category: x64_neon_port_required
+  arm64_target: adler32_copy_neon
+  arm64_file: arch/arm/adler32_neon.c
+  description: |-
+    AVX512 Adler-32 checksum with simultaneous memory copy. Must be ported to adler32_copy_neon.
+    Shares adler32_copy_impl with ISSUE-0001; COPY=1 additionally writes src to dst.
+    Tail handling (len < 64) uses masked load/store:
+      _mm512_maskz_loadu_epi8 + _mm512_mask_storeu_epi8
+    ARM64 equivalent: vld1q_u8 + vst1q_u8; tail via byte-by-byte or predicated load/store.
+  context: |2-
+            vs3 = _mm512_setzero_si512();
+
+            size_t k = ALIGN_DOWN(MIN(len, NMAX), 64);
+            len -= k;
+
+            while (k >= 64) {
+                /*
+                   vs1 = adler + sum(c[i])
+                   vs2 = sum2 + 64 vs1 + sum( (64-i+1) c[i] )
+                */
+                vbuf = _mm512_loadu_si512(src);
+
+                if (COPY) {
+                    _mm512_storeu_si512(dst, vbuf);
+                    dst += 64;
+                }
+
+                src += 64;
+                k -= 64;
+
+                __m512i vs1_sad = _mm512_sad_epu8(vbuf, zero);
+                __m512i v_short_sum2 = _mm512_maddubs_epi16(vbuf, dot2v);
+                vs1 = _mm512_add_epi32(vs1_sad, vs1);
+                vs3 = _mm512_add_epi32(vs3, vs1_0);
+                __m512i vsum2 = _mm512_madd_epi16(v_short_sum2, dot3v);
+                vs2 = _mm512_add_epi32(vsum2, vs2);
+                vs1_0 = vs1;
+            }
+
+            vs3 = _mm512_slli_epi32(vs3, 6);
+- id: ISSUE-0006
+  file: arch/x86/adler32_avx512.c
+  code_range: 78-100
+  category: x64_neon_port_required
+  arm64_target: adler32_copy_neon
+  arm64_file: arch/arm/adler32_neon.c
+  description: |-
+    AVX512 Adler-32 checksum with simultaneous memory copy. Must be ported to adler32_copy_neon.
+    Shares adler32_copy_impl with ISSUE-0001; COPY=1 additionally writes src to dst.
+    Tail handling (len < 64) uses masked load/store:
+      _mm512_maskz_loadu_epi8 + _mm512_mask_storeu_epi8
+    ARM64 equivalent: vld1q_u8 + vst1q_u8; tail via byte-by-byte or predicated load/store.
+  context: |2-
+            vs2 = _mm512_add_epi32(vs2, vs3);
+
+            adler0 = partial_hsum(vs1) % BASE;
+            adler1 = _mm512_reduce_add_epu32(vs2) % BASE;
+        }
+
+        adler = adler0 | (adler1 << 16);
+
+        /* Process tail (len < 64). */
+        if (len) {
+            goto rem_peel;
+        }
+
+        return adler;
+    }
+
+    Z_INTERNAL uint32_t adler32_avx512(uint32_t adler, const uint8_t *src, size_t len) {
+        return adler32_copy_impl(adler, NULL, src, len, 0);
+    }
+
+    Z_INTERNAL uint32_t adler32_copy_avx512(uint32_t adler, uint8_t *dst, const uint8_t *src, size_t len) {
+        return adler32_copy_impl(adler, dst, src, len, 1);
+    }
+- id: ISSUE-0007
+  file: arch/x86/chunkset_avx512.c
+  code_range: 14-43
+  category: x64_neon_port_required
+  arm64_target: chunkmemset_safe_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 safe chunk memory-set function generated via template (chunkset_tpl.h).
+    chunk_t is __m256i (256-bit); ARM64 uses uint8x16_t (128-bit).
+    Key intrinsic mappings:
+      _mm256_set1_epi16/32/64x    -> vdupq_n_u16/u32/u64
+      _mm256_loadu/storeu_si256   -> vld1q_u8 / vst1q_u8
+      _mm256_broadcastsi128_si256 -> vcombine_u8(a, a)
+      _mm256_shuffle_epi8         -> vqtbl1q_u8 (aarch64 only)
+      _mm256_maskz_loadu_epi8     -> vld1q_u8 with manual masking
+  context: |-
+    typedef __m256i chunk_t;
+    typedef __m128i halfchunk_t;
+    typedef __mmask32 mask_t;
+    typedef __mmask16 halfmask_t;
+
+    #define HAVE_CHUNKMEMSET_2
+    #define HAVE_CHUNKMEMSET_4
+    #define HAVE_CHUNKMEMSET_8
+    #define HAVE_CHUNKMEMSET_16
+    #define HAVE_CHUNK_MAG
+    #define HAVE_HALF_CHUNK
+    #define HAVE_MASKED_READWRITE
+    #define HAVE_CHUNKCOPY
+    #define HAVE_HALFCHUNKCOPY
+
+    static inline halfmask_t gen_half_mask(size_t len) {
+       return (halfmask_t)_bzhi_u32(0xFFFF, (unsigned)len);
+    }
+
+    static inline mask_t gen_mask(size_t len) {
+       return (mask_t)_bzhi_u32(0xFFFFFFFF, (unsigned)len);
+    }
+
+    static inline void chunkmemset_2(uint8_t *from, chunk_t *chunk) {
+        *chunk = _mm256_set1_epi16(zng_memread_2(from));
+    }
+
+    static inline void chunkmemset_4(uint8_t *from, chunk_t *chunk) {
+        *chunk = _mm256_set1_epi32(zng_memread_4(from));
+    }
+- id: ISSUE-0008
+  file: arch/x86/chunkset_avx512.c
+  code_range: 44-73
+  category: x64_neon_port_required
+  arm64_target: chunkmemset_safe_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 safe chunk memory-set function generated via template (chunkset_tpl.h).
+    chunk_t is __m256i (256-bit); ARM64 uses uint8x16_t (128-bit).
+    Key intrinsic mappings:
+      _mm256_set1_epi16/32/64x    -> vdupq_n_u16/u32/u64
+      _mm256_loadu/storeu_si256   -> vld1q_u8 / vst1q_u8
+      _mm256_broadcastsi128_si256 -> vcombine_u8(a, a)
+      _mm256_shuffle_epi8         -> vqtbl1q_u8 (aarch64 only)
+      _mm256_maskz_loadu_epi8     -> vld1q_u8 with manual masking
+  context: |2
+
+    static inline void chunkmemset_8(uint8_t *from, chunk_t *chunk) {
+        *chunk = _mm256_set1_epi64x(zng_memread_8(from));
+    }
+
+    static inline void chunkmemset_16(uint8_t *from, chunk_t *chunk) {
+        /* Unfortunately there seems to be a compiler bug in Visual Studio 2015 where
+         * the load is dumped to the stack with an aligned move for this memory-register
+         * broadcast. The vbroadcasti128 instruction is 2 fewer cycles and this dump to
+         * stack doesn't exist if compiled with optimizations. For the sake of working
+         * properly in a debugger, let's take the 2 cycle penalty */
+    #if defined(_MSC_VER) && _MSC_VER <= 1900
+        halfchunk_t half = _mm_loadu_si128((__m128i*)from);
+        *chunk = _mm256_inserti128_si256(_mm256_castsi128_si256(half), half, 1);
+    #else
+        *chunk = _mm256_broadcastsi128_si256(_mm_loadu_si128((__m128i*)from));
+    #endif
+    }
+
+    static inline void loadchunk(uint8_t const *s, chunk_t *chunk) {
+        *chunk = _mm256_loadu_si256((__m256i *)s);
+    }
+
+    static inline void storechunk(uint8_t *out, chunk_t *chunk) {
+        _mm256_storeu_si256((__m256i *)out, *chunk);
+    }
+
+    static inline uint8_t* CHUNKCOPY(uint8_t *out, uint8_t const *from, size_t len) {
+        Assert(len > 0, "chunkcopy should never have a length 0");
+- id: ISSUE-0009
+  file: arch/x86/chunkset_avx512.c
+  code_range: 74-103
+  category: x64_neon_port_required
+  arm64_target: chunkmemset_safe_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 safe chunk memory-set function generated via template (chunkset_tpl.h).
+    chunk_t is __m256i (256-bit); ARM64 uses uint8x16_t (128-bit).
+    Key intrinsic mappings:
+      _mm256_set1_epi16/32/64x    -> vdupq_n_u16/u32/u64
+      _mm256_loadu/storeu_si256   -> vld1q_u8 / vst1q_u8
+      _mm256_broadcastsi128_si256 -> vcombine_u8(a, a)
+      _mm256_shuffle_epi8         -> vqtbl1q_u8 (aarch64 only)
+      _mm256_maskz_loadu_epi8     -> vld1q_u8 with manual masking
+  context: |2-
+        chunk_t chunk;
+        size_t rem = len % sizeof(chunk_t);
+
+        if (len < sizeof(chunk_t)) {
+            mask_t rem_mask = gen_mask(rem);
+            chunk = _mm256_maskz_loadu_epi8(rem_mask, from);
+            _mm256_mask_storeu_epi8(out, rem_mask, chunk);
+            return out + rem;
+        }
+
+        loadchunk(from, &chunk);
+        rem = (rem == 0) ? sizeof(chunk_t) : rem;
+        storechunk(out, &chunk);
+        out += rem;
+        from += rem;
+        len -= rem;
+
+        while (len > 0) {
+            loadchunk(from, &chunk);
+            storechunk(out, &chunk);
+            out += sizeof(chunk_t);
+            from += sizeof(chunk_t);
+            len -= sizeof(chunk_t);
+        }
+
+        return out;
+    }
+
+    /* MSVC compiler decompression bug when optimizing for size */
+    #if defined(_MSC_VER) && _MSC_VER < 1943
+- id: ISSUE-0010
+  file: arch/x86/chunkset_avx512.c
+  code_range: 104-133
+  category: x64_neon_port_required
+  arm64_target: chunkmemset_safe_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 safe chunk memory-set function generated via template (chunkset_tpl.h).
+    chunk_t is __m256i (256-bit); ARM64 uses uint8x16_t (128-bit).
+    Key intrinsic mappings:
+      _mm256_set1_epi16/32/64x    -> vdupq_n_u16/u32/u64
+      _mm256_loadu/storeu_si256   -> vld1q_u8 / vst1q_u8
+      _mm256_broadcastsi128_si256 -> vcombine_u8(a, a)
+      _mm256_shuffle_epi8         -> vqtbl1q_u8 (aarch64 only)
+      _mm256_maskz_loadu_epi8     -> vld1q_u8 with manual masking
+  context: |-
+    #  pragma optimize("", off)
+    #endif
+    static inline chunk_t GET_CHUNK_MAG(uint8_t *buf, size_t *chunk_rem, size_t dist) {
+        lut_rem_pair lut_rem = perm_idx_lut[dist - 3];
+        __m256i ret_vec;
+        *chunk_rem = lut_rem.remval;
+
+        /* See the AVX2 implementation for more detailed comments. This is that + some masked
+         * loads to avoid an out of bounds read on the heap */
+
+        if (dist < 16) {
+            __m256i perm_vec = _mm256_load_si256((__m256i*)(permute_table+lut_rem.idx));
+            halfmask_t load_mask = gen_half_mask(dist);
+            __m128i ret_vec0 = _mm_maskz_loadu_epi8(load_mask, buf);
+            ret_vec = _mm256_inserti128_si256(_mm256_castsi128_si256(ret_vec0), ret_vec0, 1);
+            ret_vec = _mm256_shuffle_epi8(ret_vec, perm_vec);
+        }  else {
+            halfmask_t load_mask = gen_half_mask(dist - 16);
+            __m128i ret_vec0 = _mm_loadu_si128((__m128i*)buf);
+            __m128i ret_vec1 = _mm_maskz_loadu_epi8(load_mask, (__m128i*)(buf + 16));
+            __m128i perm_vec1 = _mm_load_si128((__m128i*)(permute_table + lut_rem.idx));
+            halfmask_t xlane_mask = _mm_cmp_epi8_mask(perm_vec1, _mm_set1_epi8(15), _MM_CMPINT_LE);
+            __m128i latter_half = _mm_mask_shuffle_epi8(ret_vec1, xlane_mask, ret_vec0, perm_vec1);
+            ret_vec = _mm256_inserti128_si256(_mm256_castsi128_si256(ret_vec0), latter_half, 1);
+        }
+
+        return ret_vec;
+    }
+    #if defined(_MSC_VER) && _MSC_VER < 1943
+    #  pragma optimize("", on)
+- id: ISSUE-0011
+  file: arch/x86/chunkset_avx512.c
+  code_range: 134-163
+  category: x64_neon_port_required
+  arm64_target: chunkmemset_safe_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 safe chunk memory-set function generated via template (chunkset_tpl.h).
+    chunk_t is __m256i (256-bit); ARM64 uses uint8x16_t (128-bit).
+    Key intrinsic mappings:
+      _mm256_set1_epi16/32/64x    -> vdupq_n_u16/u32/u64
+      _mm256_loadu/storeu_si256   -> vld1q_u8 / vst1q_u8
+      _mm256_broadcastsi128_si256 -> vcombine_u8(a, a)
+      _mm256_shuffle_epi8         -> vqtbl1q_u8 (aarch64 only)
+      _mm256_maskz_loadu_epi8     -> vld1q_u8 with manual masking
+  context: |-
+    #endif
+
+    static inline void storehalfchunk(uint8_t *out, halfchunk_t *chunk) {
+        _mm_storeu_si128((__m128i *)out, *chunk);
+    }
+
+    static inline chunk_t halfchunk2whole(halfchunk_t *chunk) {
+        /* We zero extend mostly to appease some memory sanitizers. These bytes are ultimately
+         * unlikely to be actually written or read from */
+        return _mm256_zextsi128_si256(*chunk);
+    }
+
+    static inline halfchunk_t GET_HALFCHUNK_MAG(uint8_t *buf, size_t *chunk_rem, size_t dist) {
+        lut_rem_pair lut_rem = perm_idx_lut[dist - 3];
+        __m128i perm_vec, ret_vec;
+        halfmask_t load_mask = gen_half_mask(dist);
+        ret_vec = _mm_maskz_loadu_epi8(load_mask, buf);
+        *chunk_rem = half_rem_vals[dist - 3];
+
+        perm_vec = _mm_load_si128((__m128i*)(permute_table + lut_rem.idx));
+        ret_vec = _mm_shuffle_epi8(ret_vec, perm_vec);
+
+        return ret_vec;
+    }
+
+    static inline uint8_t* HALFCHUNKCOPY(uint8_t *out, uint8_t const *from, size_t len) {
+        Assert(len > 0, "chunkcopy should never have a length 0");
+        halfchunk_t chunk;
+
+        size_t rem = len % sizeof(halfchunk_t);
+- id: ISSUE-0012
+  file: arch/x86/chunkset_avx512.c
+  code_range: 164-180
+  category: x64_neon_port_required
+  arm64_target: chunkmemset_safe_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 safe chunk memory-set function generated via template (chunkset_tpl.h).
+    chunk_t is __m256i (256-bit); ARM64 uses uint8x16_t (128-bit).
+    Key intrinsic mappings:
+      _mm256_set1_epi16/32/64x    -> vdupq_n_u16/u32/u64
+      _mm256_loadu/storeu_si256   -> vld1q_u8 / vst1q_u8
+      _mm256_broadcastsi128_si256 -> vcombine_u8(a, a)
+      _mm256_shuffle_epi8         -> vqtbl1q_u8 (aarch64 only)
+      _mm256_maskz_loadu_epi8     -> vld1q_u8 with manual masking
+  context: |2-
+        if (rem == 0) {
+            rem = sizeof(halfchunk_t);
+        }
+
+        halfmask_t rem_mask = gen_half_mask(rem);
+        chunk = _mm_maskz_loadu_epi8(rem_mask, from);
+        _mm_mask_storeu_epi8(out, rem_mask, chunk);
+
+        return out + rem;
+    }
+
+    #define CHUNKSIZE        chunksize_avx512
+    #define CHUNKUNROLL      chunkunroll_avx512
+    #define CHUNKMEMSET      chunkmemset_avx512
+    #define CHUNKMEMSET_SAFE chunkmemset_safe_avx512
+
+    #include "chunkset_tpl.h"
+- id: ISSUE-0013
+  file: arch/x86/chunkset_avx512.c
+  code_range: 14-43
+  category: x64_neon_port_required
+  arm64_target: inflate_fast_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 inflate fast decompression function generated via template (inffast_tpl.h).
+    Depends on all chunk helpers in the same file; ISSUE-0003 must be completed first.
+    inffast_tpl.h calls CHUNKMEMSET_SAFE, CHUNKCOPY, HALFCHUNKCOPY, GET_CHUNK_MAG internally.
+    ARM64 port: define chunk_t as uint8x16_t, implement the same macro set, include the same templates.
+  context: |-
+    typedef __m256i chunk_t;
+    typedef __m128i halfchunk_t;
+    typedef __mmask32 mask_t;
+    typedef __mmask16 halfmask_t;
+
+    #define HAVE_CHUNKMEMSET_2
+    #define HAVE_CHUNKMEMSET_4
+    #define HAVE_CHUNKMEMSET_8
+    #define HAVE_CHUNKMEMSET_16
+    #define HAVE_CHUNK_MAG
+    #define HAVE_HALF_CHUNK
+    #define HAVE_MASKED_READWRITE
+    #define HAVE_CHUNKCOPY
+    #define HAVE_HALFCHUNKCOPY
+
+    static inline halfmask_t gen_half_mask(size_t len) {
+       return (halfmask_t)_bzhi_u32(0xFFFF, (unsigned)len);
+    }
+
+    static inline mask_t gen_mask(size_t len) {
+       return (mask_t)_bzhi_u32(0xFFFFFFFF, (unsigned)len);
+    }
+
+    static inline void chunkmemset_2(uint8_t *from, chunk_t *chunk) {
+        *chunk = _mm256_set1_epi16(zng_memread_2(from));
+    }
+
+    static inline void chunkmemset_4(uint8_t *from, chunk_t *chunk) {
+        *chunk = _mm256_set1_epi32(zng_memread_4(from));
+    }
+- id: ISSUE-0014
+  file: arch/x86/chunkset_avx512.c
+  code_range: 44-73
+  category: x64_neon_port_required
+  arm64_target: inflate_fast_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 inflate fast decompression function generated via template (inffast_tpl.h).
+    Depends on all chunk helpers in the same file; ISSUE-0003 must be completed first.
+    inffast_tpl.h calls CHUNKMEMSET_SAFE, CHUNKCOPY, HALFCHUNKCOPY, GET_CHUNK_MAG internally.
+    ARM64 port: define chunk_t as uint8x16_t, implement the same macro set, include the same templates.
+  context: |2
+
+    static inline void chunkmemset_8(uint8_t *from, chunk_t *chunk) {
+        *chunk = _mm256_set1_epi64x(zng_memread_8(from));
+    }
+
+    static inline void chunkmemset_16(uint8_t *from, chunk_t *chunk) {
+        /* Unfortunately there seems to be a compiler bug in Visual Studio 2015 where
+         * the load is dumped to the stack with an aligned move for this memory-register
+         * broadcast. The vbroadcasti128 instruction is 2 fewer cycles and this dump to
+         * stack doesn't exist if compiled with optimizations. For the sake of working
+         * properly in a debugger, let's take the 2 cycle penalty */
+    #if defined(_MSC_VER) && _MSC_VER <= 1900
+        halfchunk_t half = _mm_loadu_si128((__m128i*)from);
+        *chunk = _mm256_inserti128_si256(_mm256_castsi128_si256(half), half, 1);
+    #else
+        *chunk = _mm256_broadcastsi128_si256(_mm_loadu_si128((__m128i*)from));
+    #endif
+    }
+
+    static inline void loadchunk(uint8_t const *s, chunk_t *chunk) {
+        *chunk = _mm256_loadu_si256((__m256i *)s);
+    }
+
+    static inline void storechunk(uint8_t *out, chunk_t *chunk) {
+        _mm256_storeu_si256((__m256i *)out, *chunk);
+    }
+
+    static inline uint8_t* CHUNKCOPY(uint8_t *out, uint8_t const *from, size_t len) {
+        Assert(len > 0, "chunkcopy should never have a length 0");
+- id: ISSUE-0015
+  file: arch/x86/chunkset_avx512.c
+  code_range: 74-103
+  category: x64_neon_port_required
+  arm64_target: inflate_fast_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 inflate fast decompression function generated via template (inffast_tpl.h).
+    Depends on all chunk helpers in the same file; ISSUE-0003 must be completed first.
+    inffast_tpl.h calls CHUNKMEMSET_SAFE, CHUNKCOPY, HALFCHUNKCOPY, GET_CHUNK_MAG internally.
+    ARM64 port: define chunk_t as uint8x16_t, implement the same macro set, include the same templates.
+  context: |2-
+        chunk_t chunk;
+        size_t rem = len % sizeof(chunk_t);
+
+        if (len < sizeof(chunk_t)) {
+            mask_t rem_mask = gen_mask(rem);
+            chunk = _mm256_maskz_loadu_epi8(rem_mask, from);
+            _mm256_mask_storeu_epi8(out, rem_mask, chunk);
+            return out + rem;
+        }
+
+        loadchunk(from, &chunk);
+        rem = (rem == 0) ? sizeof(chunk_t) : rem;
+        storechunk(out, &chunk);
+        out += rem;
+        from += rem;
+        len -= rem;
+
+        while (len > 0) {
+            loadchunk(from, &chunk);
+            storechunk(out, &chunk);
+            out += sizeof(chunk_t);
+            from += sizeof(chunk_t);
+            len -= sizeof(chunk_t);
+        }
+
+        return out;
+    }
+
+    /* MSVC compiler decompression bug when optimizing for size */
+    #if defined(_MSC_VER) && _MSC_VER < 1943
+- id: ISSUE-0016
+  file: arch/x86/chunkset_avx512.c
+  code_range: 104-133
+  category: x64_neon_port_required
+  arm64_target: inflate_fast_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 inflate fast decompression function generated via template (inffast_tpl.h).
+    Depends on all chunk helpers in the same file; ISSUE-0003 must be completed first.
+    inffast_tpl.h calls CHUNKMEMSET_SAFE, CHUNKCOPY, HALFCHUNKCOPY, GET_CHUNK_MAG internally.
+    ARM64 port: define chunk_t as uint8x16_t, implement the same macro set, include the same templates.
+  context: |-
+    #  pragma optimize("", off)
+    #endif
+    static inline chunk_t GET_CHUNK_MAG(uint8_t *buf, size_t *chunk_rem, size_t dist) {
+        lut_rem_pair lut_rem = perm_idx_lut[dist - 3];
+        __m256i ret_vec;
+        *chunk_rem = lut_rem.remval;
+
+        /* See the AVX2 implementation for more detailed comments. This is that + some masked
+         * loads to avoid an out of bounds read on the heap */
+
+        if (dist < 16) {
+            __m256i perm_vec = _mm256_load_si256((__m256i*)(permute_table+lut_rem.idx));
+            halfmask_t load_mask = gen_half_mask(dist);
+            __m128i ret_vec0 = _mm_maskz_loadu_epi8(load_mask, buf);
+            ret_vec = _mm256_inserti128_si256(_mm256_castsi128_si256(ret_vec0), ret_vec0, 1);
+            ret_vec = _mm256_shuffle_epi8(ret_vec, perm_vec);
+        }  else {
+            halfmask_t load_mask = gen_half_mask(dist - 16);
+            __m128i ret_vec0 = _mm_loadu_si128((__m128i*)buf);
+            __m128i ret_vec1 = _mm_maskz_loadu_epi8(load_mask, (__m128i*)(buf + 16));
+            __m128i perm_vec1 = _mm_load_si128((__m128i*)(permute_table + lut_rem.idx));
+            halfmask_t xlane_mask = _mm_cmp_epi8_mask(perm_vec1, _mm_set1_epi8(15), _MM_CMPINT_LE);
+            __m128i latter_half = _mm_mask_shuffle_epi8(ret_vec1, xlane_mask, ret_vec0, perm_vec1);
+            ret_vec = _mm256_inserti128_si256(_mm256_castsi128_si256(ret_vec0), latter_half, 1);
+        }
+
+        return ret_vec;
+    }
+    #if defined(_MSC_VER) && _MSC_VER < 1943
+    #  pragma optimize("", on)
+- id: ISSUE-0017
+  file: arch/x86/chunkset_avx512.c
+  code_range: 134-163
+  category: x64_neon_port_required
+  arm64_target: inflate_fast_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 inflate fast decompression function generated via template (inffast_tpl.h).
+    Depends on all chunk helpers in the same file; ISSUE-0003 must be completed first.
+    inffast_tpl.h calls CHUNKMEMSET_SAFE, CHUNKCOPY, HALFCHUNKCOPY, GET_CHUNK_MAG internally.
+    ARM64 port: define chunk_t as uint8x16_t, implement the same macro set, include the same templates.
+  context: |-
+    #endif
+
+    static inline void storehalfchunk(uint8_t *out, halfchunk_t *chunk) {
+        _mm_storeu_si128((__m128i *)out, *chunk);
+    }
+
+    static inline chunk_t halfchunk2whole(halfchunk_t *chunk) {
+        /* We zero extend mostly to appease some memory sanitizers. These bytes are ultimately
+         * unlikely to be actually written or read from */
+        return _mm256_zextsi128_si256(*chunk);
+    }
+
+    static inline halfchunk_t GET_HALFCHUNK_MAG(uint8_t *buf, size_t *chunk_rem, size_t dist) {
+        lut_rem_pair lut_rem = perm_idx_lut[dist - 3];
+        __m128i perm_vec, ret_vec;
+        halfmask_t load_mask = gen_half_mask(dist);
+        ret_vec = _mm_maskz_loadu_epi8(load_mask, buf);
+        *chunk_rem = half_rem_vals[dist - 3];
+
+        perm_vec = _mm_load_si128((__m128i*)(permute_table + lut_rem.idx));
+        ret_vec = _mm_shuffle_epi8(ret_vec, perm_vec);
+
+        return ret_vec;
+    }
+
+    static inline uint8_t* HALFCHUNKCOPY(uint8_t *out, uint8_t const *from, size_t len) {
+        Assert(len > 0, "chunkcopy should never have a length 0");
+        halfchunk_t chunk;
+
+        size_t rem = len % sizeof(halfchunk_t);
+- id: ISSUE-0018
+  file: arch/x86/chunkset_avx512.c
+  code_range: 164-184
+  category: x64_neon_port_required
+  arm64_target: inflate_fast_neon
+  arm64_file: arch/arm/chunkset_neon.c
+  description: |-
+    AVX512 inflate fast decompression function generated via template (inffast_tpl.h).
+    Depends on all chunk helpers in the same file; ISSUE-0003 must be completed first.
+    inffast_tpl.h calls CHUNKMEMSET_SAFE, CHUNKCOPY, HALFCHUNKCOPY, GET_CHUNK_MAG internally.
+    ARM64 port: define chunk_t as uint8x16_t, implement the same macro set, include the same templates.
+  context: |2-
+        if (rem == 0) {
+            rem = sizeof(halfchunk_t);
+        }
+
+        halfmask_t rem_mask = gen_half_mask(rem);
+        chunk = _mm_maskz_loadu_epi8(rem_mask, from);
+        _mm_mask_storeu_epi8(out, rem_mask, chunk);
+
+        return out + rem;
+    }
+
+    #define CHUNKSIZE        chunksize_avx512
+    #define CHUNKUNROLL      chunkunroll_avx512
+    #define CHUNKMEMSET      chunkmemset_avx512
+    #define CHUNKMEMSET_SAFE chunkmemset_safe_avx512
+
+    #include "chunkset_tpl.h"
+
+    #define INFLATE_FAST     inflate_fast_avx512
+
+    #include "inffast_tpl.h"
+- id: ISSUE-0019
+  file: arch/x86/compare256_avx512.c
+  code_range: 20-49
+  category: x64_neon_port_required
+  arm64_target: compare256_neon
+  arm64_file: arch/arm/compare256_neon.c
+  description: |-
+    AVX512 256-byte comparison function. Must be ported to compare256_neon.
+    Algorithm: one 16-byte round, three 64-byte rounds, one overlapping 64-byte tail round.
+    Returns byte offset of first mismatch.
+    Key intrinsic mappings:
+      _mm512_loadu_si512     -> vld1q_u8 x4 (four 16-byte loads)
+      _mm512_cmpeq_epu8_mask -> veorq_u8 + vgetq_lane_u64
+      zng_ctz64(~mask)       -> __builtin_ctzll on XOR result
+  context: |-
+    static inline uint32_t compare256_avx512_static(const uint8_t *src0, const uint8_t *src1) {
+        __m512i zmm_src0_4, zmm_src1_4;
+        __m512i zmm_src0_3, zmm_src1_3;
+        __m512i zmm_src0_2, zmm_src1_2;
+        __m512i zmm_src0_1, zmm_src1_1;
+        __m128i xmm_src0_0, xmm_src1_0;
+        uint64_t mask_1, mask_2, mask_3, mask_4;
+        uint32_t mask_0;
+
+        // First do a 16byte round before increasing to 64bytes, this reduces the
+        // penalty for the short matches, and those are usually the most common ones.
+        // This requires us to overlap on the last round, giving a small penalty
+        // on matches of 192+ bytes (Still faster than AVX2 though).
+
+        // 16 bytes
+        xmm_src0_0 = _mm_loadu_si128((__m128i*)src0);
+        xmm_src1_0 = _mm_loadu_si128((__m128i*)src1);
+        mask_0 = (uint32_t)_mm_cmpeq_epu8_mask(xmm_src0_0, xmm_src1_0);
+        if (mask_0 != 0x0000FFFF)
+            return zng_ctz32(~mask_0); /* Invert bits so identical = 0 */
+
+        // 64 bytes
+        zmm_src0_1 = _mm512_loadu_si512((__m512i*)(src0 + 16));
+        zmm_src1_1 = _mm512_loadu_si512((__m512i*)(src1 + 16));
+        mask_1 = _mm512_cmpeq_epu8_mask(zmm_src0_1, zmm_src1_1);
+        if (mask_1 != 0xFFFFFFFFFFFFFFFF)
+            return 16 + zng_ctz64(~mask_1);
+
+        // 64 bytes
+        zmm_src0_2 = _mm512_loadu_si512((__m512i*)(src0 + 80));
+- id: ISSUE-0020
+  file: arch/x86/compare256_avx512.c
+  code_range: 50-74
+  category: x64_neon_port_required
+  arm64_target: compare256_neon
+  arm64_file: arch/arm/compare256_neon.c
+  description: |-
+    AVX512 256-byte comparison function. Must be ported to compare256_neon.
+    Algorithm: one 16-byte round, three 64-byte rounds, one overlapping 64-byte tail round.
+    Returns byte offset of first mismatch.
+    Key intrinsic mappings:
+      _mm512_loadu_si512     -> vld1q_u8 x4 (four 16-byte loads)
+      _mm512_cmpeq_epu8_mask -> veorq_u8 + vgetq_lane_u64
+      zng_ctz64(~mask)       -> __builtin_ctzll on XOR result
+  context: |2-
+        zmm_src1_2 = _mm512_loadu_si512((__m512i*)(src1 + 80));
+        mask_2 = _mm512_cmpeq_epu8_mask(zmm_src0_2, zmm_src1_2);
+        if (mask_2 != 0xFFFFFFFFFFFFFFFF)
+            return 80 + zng_ctz64(~mask_2);
+
+        // 64 bytes
+        zmm_src0_3 = _mm512_loadu_si512((__m512i*)(src0 + 144));
+        zmm_src1_3 = _mm512_loadu_si512((__m512i*)(src1 + 144));
+        mask_3 = _mm512_cmpeq_epu8_mask(zmm_src0_3, zmm_src1_3);
+        if (mask_3 != 0xFFFFFFFFFFFFFFFF)
+            return 144 + zng_ctz64(~mask_3);
+
+        // 64 bytes (overlaps the previous 16 bytes for fast tail processing)
+        zmm_src0_4 = _mm512_loadu_si512((__m512i*)(src0 + 192));
+        zmm_src1_4 = _mm512_loadu_si512((__m512i*)(src1 + 192));
+        mask_4 = _mm512_cmpeq_epu8_mask(zmm_src0_4, zmm_src1_4);
+        if (mask_4 != 0xFFFFFFFFFFFFFFFF)
+            return 192 + zng_ctz64(~mask_4);
+
+        return 256;
+    }
+
+    Z_INTERNAL uint32_t compare256_avx512(const uint8_t *src0, const uint8_t *src1) {
+        return compare256_avx512_static(src0, src1);
+    }
+- id: ISSUE-0021
+  file: arch/x86/compare256_avx512.c
+  code_range: 20-49
+  category: x64_neon_port_required
+  arm64_target: longest_match_neon
+  arm64_file: arch/arm/compare256_neon.c
+  description: |-
+    AVX512 longest-match search function generated via template (match_tpl.h).
+    The match_tpl.h loop logic is pure C; only the inner COMPARE256 call is SIMD.
+    ARM64 port: provide compare256_neon_static as COMPARE256, then:
+      #define LONGEST_MATCH longest_match_neon
+      #include "match_tpl.h"
+  context: |-
+    static inline uint32_t compare256_avx512_static(const uint8_t *src0, const uint8_t *src1) {
+        __m512i zmm_src0_4, zmm_src1_4;
+        __m512i zmm_src0_3, zmm_src1_3;
+        __m512i zmm_src0_2, zmm_src1_2;
+        __m512i zmm_src0_1, zmm_src1_1;
+        __m128i xmm_src0_0, xmm_src1_0;
+        uint64_t mask_1, mask_2, mask_3, mask_4;
+        uint32_t mask_0;
+
+        // First do a 16byte round before increasing to 64bytes, this reduces the
+        // penalty for the short matches, and those are usually the most common ones.
+        // This requires us to overlap on the last round, giving a small penalty
+        // on matches of 192+ bytes (Still faster than AVX2 though).
+
+        // 16 bytes
+        xmm_src0_0 = _mm_loadu_si128((__m128i*)src0);
+        xmm_src1_0 = _mm_loadu_si128((__m128i*)src1);
+        mask_0 = (uint32_t)_mm_cmpeq_epu8_mask(xmm_src0_0, xmm_src1_0);
+        if (mask_0 != 0x0000FFFF)
+            return zng_ctz32(~mask_0); /* Invert bits so identical = 0 */
+
+        // 64 bytes
+        zmm_src0_1 = _mm512_loadu_si512((__m512i*)(src0 + 16));
+        zmm_src1_1 = _mm512_loadu_si512((__m512i*)(src1 + 16));
+        mask_1 = _mm512_cmpeq_epu8_mask(zmm_src0_1, zmm_src1_1);
+        if (mask_1 != 0xFFFFFFFFFFFFFFFF)
+            return 16 + zng_ctz64(~mask_1);
+
+        // 64 bytes
+        zmm_src0_2 = _mm512_loadu_si512((__m512i*)(src0 + 80));
+- id: ISSUE-0022
+  file: arch/x86/compare256_avx512.c
+  code_range: 50-79
+  category: x64_neon_port_required
+  arm64_target: longest_match_neon
+  arm64_file: arch/arm/compare256_neon.c
+  description: |-
+    AVX512 longest-match search function generated via template (match_tpl.h).
+    The match_tpl.h loop logic is pure C; only the inner COMPARE256 call is SIMD.
+    ARM64 port: provide compare256_neon_static as COMPARE256, then:
+      #define LONGEST_MATCH longest_match_neon
+      #include "match_tpl.h"
+  context: |2-
+        zmm_src1_2 = _mm512_loadu_si512((__m512i*)(src1 + 80));
+        mask_2 = _mm512_cmpeq_epu8_mask(zmm_src0_2, zmm_src1_2);
+        if (mask_2 != 0xFFFFFFFFFFFFFFFF)
+            return 80 + zng_ctz64(~mask_2);
+
+        // 64 bytes
+        zmm_src0_3 = _mm512_loadu_si512((__m512i*)(src0 + 144));
+        zmm_src1_3 = _mm512_loadu_si512((__m512i*)(src1 + 144));
+        mask_3 = _mm512_cmpeq_epu8_mask(zmm_src0_3, zmm_src1_3);
+        if (mask_3 != 0xFFFFFFFFFFFFFFFF)
+            return 144 + zng_ctz64(~mask_3);
+
+        // 64 bytes (overlaps the previous 16 bytes for fast tail processing)
+        zmm_src0_4 = _mm512_loadu_si512((__m512i*)(src0 + 192));
+        zmm_src1_4 = _mm512_loadu_si512((__m512i*)(src1 + 192));
+        mask_4 = _mm512_cmpeq_epu8_mask(zmm_src0_4, zmm_src1_4);
+        if (mask_4 != 0xFFFFFFFFFFFFFFFF)
+            return 192 + zng_ctz64(~mask_4);
+
+        return 256;
+    }
+
+    Z_INTERNAL uint32_t compare256_avx512(const uint8_t *src0, const uint8_t *src1) {
+        return compare256_avx512_static(src0, src1);
+    }
+
+    #define LONGEST_MATCH       longest_match_avx512
+    #define COMPARE256          compare256_avx512_static
+
+    #include "match_tpl.h"
+- id: ISSUE-0023
+  file: arch/x86/compare256_avx512.c
+  code_range: 20-49
+  category: x64_neon_port_required
+  arm64_target: longest_match_roll_neon
+  arm64_file: arch/arm/compare256_neon.c
+  description: |-
+    AVX512 rolling longest-match search function generated via template (match_tpl.h).
+    Shares the same compare256 core as ISSUE-0006; LONGEST_MATCH_ROLL enables the rolling hash variant.
+    ARM64 port: add the LONGEST_MATCH_ROLL define alongside the ISSUE-0006 port; no additional SIMD needed.
+  context: |-
+    static inline uint32_t compare256_avx512_static(const uint8_t *src0, const uint8_t *src1) {
+        __m512i zmm_src0_4, zmm_src1_4;
+        __m512i zmm_src0_3, zmm_src1_3;
+        __m512i zmm_src0_2, zmm_src1_2;
+        __m512i zmm_src0_1, zmm_src1_1;
+        __m128i xmm_src0_0, xmm_src1_0;
+        uint64_t mask_1, mask_2, mask_3, mask_4;
+        uint32_t mask_0;
+
+        // First do a 16byte round before increasing to 64bytes, this reduces the
+        // penalty for the short matches, and those are usually the most common ones.
+        // This requires us to overlap on the last round, giving a small penalty
+        // on matches of 192+ bytes (Still faster than AVX2 though).
+
+        // 16 bytes
+        xmm_src0_0 = _mm_loadu_si128((__m128i*)src0);
+        xmm_src1_0 = _mm_loadu_si128((__m128i*)src1);
+        mask_0 = (uint32_t)_mm_cmpeq_epu8_mask(xmm_src0_0, xmm_src1_0);
+        if (mask_0 != 0x0000FFFF)
+            return zng_ctz32(~mask_0); /* Invert bits so identical = 0 */
+
+        // 64 bytes
+        zmm_src0_1 = _mm512_loadu_si512((__m512i*)(src0 + 16));
+        zmm_src1_1 = _mm512_loadu_si512((__m512i*)(src1 + 16));
+        mask_1 = _mm512_cmpeq_epu8_mask(zmm_src0_1, zmm_src1_1);
+        if (mask_1 != 0xFFFFFFFFFFFFFFFF)
+            return 16 + zng_ctz64(~mask_1);
+
+        // 64 bytes
+        zmm_src0_2 = _mm512_loadu_si512((__m512i*)(src0 + 80));
+- id: ISSUE-0024
+  file: arch/x86/compare256_avx512.c
+  code_range: 50-79
+  category: x64_neon_port_required
+  arm64_target: longest_match_roll_neon
+  arm64_file: arch/arm/compare256_neon.c
+  description: |-
+    AVX512 rolling longest-match search function generated via template (match_tpl.h).
+    Shares the same compare256 core as ISSUE-0006; LONGEST_MATCH_ROLL enables the rolling hash variant.
+    ARM64 port: add the LONGEST_MATCH_ROLL define alongside the ISSUE-0006 port; no additional SIMD needed.
+  context: |2
+        zmm_src1_2 = _mm512_loadu_si512((__m512i*)(src1 + 80));
+        mask_2 = _mm512_cmpeq_epu8_mask(zmm_src0_2, zmm_src1_2);
+        if (mask_2 != 0xFFFFFFFFFFFFFFFF)
+            return 80 + zng_ctz64(~mask_2);
+
+        // 64 bytes
+        zmm_src0_3 = _mm512_loadu_si512((__m512i*)(src0 + 144));
+        zmm_src1_3 = _mm512_loadu_si512((__m512i*)(src1 + 144));
+        mask_3 = _mm512_cmpeq_epu8_mask(zmm_src0_3, zmm_src1_3);
+        if (mask_3 != 0xFFFFFFFFFFFFFFFF)
+            return 144 + zng_ctz64(~mask_3);
+
+        // 64 bytes (overlaps the previous 16 bytes for fast tail processing)
+        zmm_src0_4 = _mm512_loadu_si512((__m512i*)(src0 + 192));
+        zmm_src1_4 = _mm512_loadu_si512((__m512i*)(src1 + 192));
+        mask_4 = _mm512_cmpeq_epu8_mask(zmm_src0_4, zmm_src1_4);
+        if (mask_4 != 0xFFFFFFFFFFFFFFFF)
+            return 192 + zng_ctz64(~mask_4);
+
+        return 256;
+    }
+
+    Z_INTERNAL uint32_t compare256_avx512(const uint8_t *src0, const uint8_t *src1) {
+        return compare256_avx512_static(src0, src1);
+    }
+
+    #define LONGEST_MATCH_ROLL
+    #define LONGEST_MATCH       longest_match_roll_avx512
+    #define COMPARE256          compare256_avx512_static
+- id: ISSUE-0025
+  file: arch/x86/compare256_avx512.c
+  code_range: 80-80
+  category: x64_neon_port_required
+  arm64_target: longest_match_roll_neon
+  arm64_file: arch/arm/compare256_neon.c
+  description: |-
+    AVX512 rolling longest-match search function generated via template (match_tpl.h).
+    Shares the same compare256 core as ISSUE-0006; LONGEST_MATCH_ROLL enables the rolling hash variant.
+    ARM64 port: add the LONGEST_MATCH_ROLL define alongside the ISSUE-0006 port; no additional SIMD needed.
+  context: '#include "match_tpl.h"'
+- id: ISSUE-0026
+  file: arch/x86/slide_hash_avx2.c
+  code_range: 20-46
+  category: x64_neon_port_required
+  arm64_target: slide_hash_neon
+  arm64_file: arch/arm/slide_hash_neon.c
+  description: "AVX2 hash chain slide function (no AVX512 equivalent exists). Must be ported to slide_hash_neon.\nIterates\
+    \ over head and prev arrays in 32-entry (64-byte) blocks,\nsubtracting wsize from each uint16_t entry with unsigned saturation.\n\
+    Key intrinsic mappings:\n  _mm256_set1_epi16  -> vdupq_n_u16\n  _mm256_load_si256  -> vld1q_u16 x2 (two 128-bit loads\
+    \ per 256-bit block)\n  _mm256_subs_epu16  -> vqsubq_u16\n  _mm256_store_si256 -> vst1q_u16 x2"
+  context: "static inline void slide_hash_chain(Pos *table, uint32_t entries, const __m256i wsize) {\n    table += entries;\n\
+    \    table -= 32;\n\n    do {\n        __m256i value1, value2, result1, result2;\n\n        value1 = _mm256_load_si256((__m256i\
+    \ *)table);\n        value2 = _mm256_load_si256((__m256i *)(table+16));\n        result1 = _mm256_subs_epu16(value1, wsize);\n\
+    \        result2 = _mm256_subs_epu16(value2, wsize);\n        _mm256_store_si256((__m256i *)table, result1);\n       \
+    \ _mm256_store_si256((__m256i *)(table+16), result2);\n\n        table -= 32;\n        entries -= 32;\n    } while (entries\
+    \ > 0);\n}\n\nZ_INTERNAL void slide_hash_avx2(deflate_state *s) {\n    Assert(s->w_size <= UINT16_MAX, \"w_size should\
+    \ fit in uint16_t\");\n    uint16_t wsize = (uint16_t)s->w_size;\n    const __m256i ymm_wsize = _mm256_set1_epi16((short)wsize);\n\
+    \n    slide_hash_chain(s->head, HASH_SIZE, ymm_wsize);\n    slide_hash_chain(s->prev, wsize, ymm_wsize);\n}"
+- id: ISSUE-0027
+  file: arch/x86/crc32_vpclmulqdq_avx512.c
+  code_range: 10-12
+  category: x64_neon_port_required
+  arm64_target: crc32_armv8
+  arm64_file: arch/arm/crc32_armv8.c
+  description: "x86 VPCLMULQDQ+AVX512 CRC32. Wrapper over crc32_copy_impl from crc32_pclmulqdq_tpl.h.\nUses carry-less multiplication\
+    \ (_mm512_clmulepi64_epi128) for polynomial folding.\nARM64 replacement: ARMv8 hardware CRC32 instructions from <arm_acle.h>:\n\
+    \  __crc32b / __crc32h / __crc32w / __crc32d\nNo CLMUL emulation needed; hardware CRC32 offers comparable throughput.\n\
+    Requires: -march=armv8-a+crc or __attribute__((target(\"crc\")))."
+  context: "Z_INTERNAL uint32_t crc32_vpclmulqdq_avx512(uint32_t crc, const uint8_t *buf, size_t len) {\n    return crc32_copy_impl(crc,\
+    \ NULL, buf, len, 0);\n}"
+- id: ISSUE-0028
+  file: arch/x86/crc32_vpclmulqdq_avx512.c
+  code_range: 14-16
+  category: x64_neon_port_required
+  arm64_target: crc32_copy_armv8
+  arm64_file: arch/arm/crc32_armv8.c
+  description: 'x86 VPCLMULQDQ+AVX512 CRC32 with simultaneous memory copy. Shares crc32_copy_impl with ISSUE-0009.
+
+    COPY=1 writes src to dst during computation.
+
+    ARM64 replacement: interleave __crc32b/__crc32w calls with vst1q_u8 stores in the main loop,
+
+    or perform memcpy first then call crc32_armv8 (profile both approaches).
+
+    Note: combined copy+checksum access patterns differ from pure checksum; benchmark separately.'
+  context: "Z_INTERNAL uint32_t crc32_copy_vpclmulqdq_avx512(uint32_t crc, uint8_t *dst, const uint8_t *src, size_t len) {\n\
+    \    return crc32_copy_impl(crc, dst, src, len, 1);\n}"

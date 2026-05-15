@@ -112,7 +112,7 @@ const TaskDetailPage = () => {
     const handleDownloadResult = async (record) => {
         try {
             message.loading({ content: 'Downloading...', key: 'download' });
-            const response = await fetch(`/api/task/result/detail/${record.id}`, {
+            const response = await fetch(`/api/task/result/json/${record.id}`, {
                  headers: {
                     'Authorization': `Bearer ${localStorage.getItem('access_token')}`
                 }
@@ -122,11 +122,11 @@ const TaskDetailPage = () => {
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                
-                let filename = `result_${record.id}.html`;
+
+                let filename = `result_${record.id}.json`;
                 if (record.result_file_path) {
                     const parts = record.result_file_path.split(/[/\\]/);
-                    filename = parts[parts.length - 1];
+                    filename = parts[parts.length - 1].replace(/\.html$/, '.json');
                 }
 
                 a.download = filename;
@@ -141,6 +141,39 @@ const TaskDetailPage = () => {
         } catch (error) {
             console.error('Download error:', error);
             message.error({ content: 'Download error', key: 'download' });
+        }
+    };
+
+    const handleDownloadYaml = async (record) => {
+        try {
+            message.loading({ content: 'Generating YAML report...', key: 'downloadYaml' });
+            const response = await fetch(`/api/task/result/yaml/${record.id}`, {
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                }
+            });
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                let filename = `result_${record.id}.yaml`;
+                if (record.result_file_path) {
+                    const parts = record.result_file_path.split(/[/\\]/);
+                    filename = parts[parts.length - 1].replace(/\.html$/, '.yaml');
+                }
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                message.success({ content: 'YAML report downloaded', key: 'downloadYaml' });
+            } else {
+                message.error({ content: 'Failed to download YAML report', key: 'downloadYaml' });
+            }
+        } catch (error) {
+            console.error('YAML download error:', error);
+            message.error({ content: 'YAML download error', key: 'downloadYaml' });
         }
     };
 
@@ -213,19 +246,26 @@ const TaskDetailPage = () => {
                 <Space>
                     {record.result_status === 'success' && (
                         <>
-                            <Button 
-                                size="small" 
-                                icon={<FileSearchOutlined />} 
+                            <Button
+                                size="small"
+                                icon={<FileSearchOutlined />}
                                 onClick={() => window.open(`/api/task/result/detail/${record.id}`, '_blank')}
                             >
                                 Check
                             </Button>
-                            <Button 
-                                size="small" 
-                                icon={<DownloadOutlined />} 
+                            <Button
+                                size="small"
+                                icon={<DownloadOutlined />}
                                 onClick={() => handleDownloadResult(record)}
                             >
-                                Download
+                                JSON
+                            </Button>
+                            <Button
+                                size="small"
+                                icon={<DownloadOutlined />}
+                                onClick={() => handleDownloadYaml(record)}
+                            >
+                                YAML
                             </Button>
                         </>
                     )}

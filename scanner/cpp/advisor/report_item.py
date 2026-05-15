@@ -106,6 +106,8 @@ class ReportItem(object):
         self.issue_type = issue_type
         self.checkpoint = checkpoint
         self.snippet = None
+        self.func_code = None        # full source code of the enclosing function
+        self.func_end_lineno = None  # last line number of the enclosing function
 
     def set_code_snippet(self, snippet):
         self.snippet = snippet

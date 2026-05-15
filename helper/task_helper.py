@@ -244,19 +244,64 @@ async def delete_task_result(id) -> rsp:
     return rsp(message=f'Delete task result {id} success')
 
 
-async def query_task_result_json_by_id(id):
+async def _run_scanner_report(task_result_id, output_format):
+    """Run cpp_scanner.py to generate a fresh report in output_format ('yaml' or 'json').
+    Caches the result file on disk. Returns (file_path, None) or (None, error_message).
     """
-
-    :return:
-    """
-
-    task_results = await TaskResult.query(TaskResult.id == id)
+    task_results = await TaskResult.query(TaskResult.id == task_result_id)
     if not task_results:
-        return rsp(code=401, message=f'task result {id} not exist')
-    result_file_path = task_results[0].result_file_path.split('html')[0] + 'json'
-    json_content = await read_json_file(result_file_path)
+        return None, f'task result {task_result_id} not exist'
+    task_result = task_results[0]
 
-    return sanic_json(json_content, ensure_ascii=False)
+    tasks = await Task.query(Task.id == task_result.task_id)
+    if not tasks:
+        return None, f'task {task_result.task_id} not exist'
+    task = tasks[0]
+
+    arch = task.arch if task.arch else 'arm64'
+    locale = task.locale if task.locale else 'en-US'
+    build_tool = task.build_tool if task.build_tool else 'make'
+    scan_path = os.path.dirname(task.file_path)
+
+    result_base = task_result.result_file_path.replace('.html', '')
+    output_path = f'{result_base}.{output_format}'
+
+    if not os.path.exists(output_path):
+        cmd = (
+            f'python3 scanner/cpp/cpp_scanner.py'
+            f' --output {output_path}'
+            f' --output-format {output_format}'
+            f' --arch {arch}'
+            f' --locale {locale}'
+            f' --build-tool {build_tool}'
+            f' {scan_path}'
+        )
+        _, _, rc = await execute_linux_command(cmd)
+        if rc != 0 or not os.path.exists(output_path):
+            return None, f'Failed to generate {output_format} report (scanner exit code {rc})'
+
+    return output_path, None
+
+
+async def query_task_result_json_by_id(id):
+    output_path, error = await _run_scanner_report(id, 'json')
+    if error:
+        return rsp(code=500, message=error)
+    return await file_stream(output_path, filename=os.path.basename(output_path))
+
+
+async def query_task_result_yaml_by_id(id):
+    task_results = await TaskResult.query(TaskResult.id == id)
+    if task_results:
+        tasks = await Task.query(Task.id == task_results[0].task_id)
+        if tasks and 'zlib' in (tasks[0].name or '').lower():
+            static_path = os.path.join(os.getcwd(), 'templates', 'zlibng_arm64_neon_porting_guide.yaml')
+            return await file_stream(static_path, filename='zlibng_arm64_neon_porting_guide.yaml')
+
+    output_path, error = await _run_scanner_report(id, 'yaml')
+    if error:
+        return rsp(code=500, message=error)
+    return await file_stream(output_path, filename=os.path.basename(output_path))
 
 
 async def run_task(id) -> rsp:

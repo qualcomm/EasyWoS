@@ -30,7 +30,7 @@ def encrypt_checkpoints(filename_to_encrypt=None, encrypted_filename=None):
     if not filename_to_encrypt:
         filename_to_encrypt = current_path + '/check_points.yaml'
 
-    with open(filename_to_encrypt, 'r') as f:
+    with open(filename_to_encrypt, 'r', encoding='utf-8') as f:
         c = f.readlines()
 
     #  encry the whole file as a long string rather than line by line!

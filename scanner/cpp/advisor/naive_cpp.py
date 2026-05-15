@@ -386,8 +386,9 @@ class NaiveCpp(object):
                 if state != State.UNSUPPORT:
                     s = State.UNKNOWN
             self.branches[-1].append(s)
+            self._update_level_state(None)
 
-            if self.branches[-1][-1] == State.UNSUPPORT:
+            if self.branches[-1][-1] == State.UNSUPPORT or self.level_state[-1] == State.UNSUPPORT:
                 return PreprocessorDirective(directive_type=PreprocessorDirective.TYPE_CONDITIONAL,
                                              is_support=False, is_start=False, is_end=True)
             else:

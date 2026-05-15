@@ -260,7 +260,7 @@ def main():
     scanners.finalize_report(report)
 
     if args.output:
-        with open(args.output, 'w') as f:
+        with open(args.output, 'w', encoding='utf-8') as f:
             report.write(f, report_errors=not args.quiet)
     else:
         report.write(sys.stdout, report_errors=not args.quiet)

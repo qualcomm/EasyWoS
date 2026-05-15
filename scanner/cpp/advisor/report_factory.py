@@ -27,6 +27,7 @@ from .csv_issue_type_count_by_file_report import CsvIssueTypeCountByFileReport
 from .html_report import HtmlReport
 from .json_report import JsonReport
 from .text_report import TextReport
+from .yaml_report import YamlReport
 from enum import Enum
 
 
@@ -37,6 +38,7 @@ class ReportOutputFormat(Enum):
     JSON = 'json'
     HTML = 'html'
     TEXT = 'text'
+    YAML = 'yaml'
     DEFAULT = AUTO
 
 
@@ -53,7 +55,9 @@ class ReportFactory:
         'html': ReportOutputFormat.HTML,
         'htm': ReportOutputFormat.HTML,
         'txt': ReportOutputFormat.TEXT,
-        'csv': ReportOutputFormat.CSV
+        'csv': ReportOutputFormat.CSV,
+        'yaml': ReportOutputFormat.YAML,
+        'yml': ReportOutputFormat.YAML,
     }
 
     def output_format_for_extension(self, extension):
@@ -103,6 +107,13 @@ class ReportFactory:
 
         elif output_format == ReportOutputFormat.JSON:
             report = JsonReport(root_directory,
+                                arch=arch,
+                                march=march,
+                                target_os=target_os,
+                                issue_type_config=issue_type_config)
+
+        elif output_format == ReportOutputFormat.YAML:
+            report = YamlReport(root_directory,
                                 arch=arch,
                                 march=march,
                                 target_os=target_os,

@@ -111,9 +111,18 @@ class TaskResultJsonlView(HTTPMethodView):
         return res
 
 
+class TaskResultYamlView(HTTPMethodView):
+    async def get(self, request, id):
+        res = await task_helper.query_task_result_yaml_by_id(
+            id=id
+        )
+        return res
+
+
 task.add_route(TaskView.as_view(), "/")
 task.add_route(TaskRunView.as_view(), "/run/<id>")
 task.add_route(TaskByIdView.as_view(), "/<id>")
 task.add_route(TaskResultByIdView.as_view(), "/result/<id>")
 task.add_route(TaskResultDetailView.as_view(), "/result/detail/<id>")
 task.add_route(TaskResultJsonlView.as_view(), "/result/json/<id>")
+task.add_route(TaskResultYamlView.as_view(), "/result/yaml/<id>")

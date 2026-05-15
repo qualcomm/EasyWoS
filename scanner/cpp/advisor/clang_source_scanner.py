@@ -18,6 +18,7 @@ from .naive_cpp import NaiveCpp, PreprocessorDirective
 from .naive_function_parser import NaiveFunctionParser
 from .pragma_issue import PragmaIssue
 from .preprocessor_error_issue import PreprocessorErrorIssue
+from .localization import _
 from .scanner import Scanner
 from .report_factory import ReportOutputFormat
 from .continuation_parser import ContinuationParser
@@ -31,9 +32,13 @@ from .checkpoints import INCOMPATIBLE_HEADER_FILE
 from .checkpoints import ARM64EC_INCOMPATIBLE_GRAMMAR
 
 import os
+import re
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Matches '#define MACRO_NAME' or '#  define MACRO_NAME'
+_DEFINE_RE = re.compile(r'#\s*define\s+(\w+)')
 
 
 class ClangSourceScanner(Scanner):
@@ -56,6 +61,12 @@ class ClangSourceScanner(Scanner):
 
         self.with_highlights = bool(
             output_format == ReportOutputFormat.HTML or self.output_format == ReportOutputFormat.JSON)
+
+        # Maps user-defined macro names (that wrap x64-incompatible intrinsics) to
+        # (compiled_word_pattern, original_checkpoint_pattern).  Shared across all
+        # files in a single scan so that macros defined in headers are detected in
+        # the source files that use them.
+        self._user_incompatible_macros: dict = {}
 
     def accepts_file(self, filename):
 
@@ -99,9 +110,13 @@ class ClangSourceScanner(Scanner):
 
         self.check_state = True
 
+        func_start_lineno: int | None = None
+        intrinsic_func_seen: set = set()
+        inline_asm_func_seen: set = set()
+
         # directive_stack: List[List[Issue]] = []
         # type of lines.keys() : <int, str>
-        for lineno in lines.keys():  
+        for lineno in lines.keys():
 
             line = lines[lineno]
 
@@ -112,7 +127,7 @@ class ClangSourceScanner(Scanner):
             is_comment = comment_parser.parse_line(line)
             if is_comment:
                 continue
-            
+
             #  header file check
             if self.check_state:
                 for c in INCOMPATIBLE_HEADER_FILE:
@@ -137,14 +152,27 @@ class ClangSourceScanner(Scanner):
                 result = naive_cpp.parse_line(line.strip())
                 if result.directive_type == PreprocessorDirective.TYPE_DEFINE \
                         and result.body is not None and self.check_state:
-                    self._check_clang(lines, lineno, line, naive_cpp, filename,
-                                      ASSEMBLY_CHECKPOINTS, ARCH_INCOMPATIBLE_INTRINSICS, issues)
+                    # Only register macros for later tracking; do NOT report the #define
+                    # itself as an issue — only functions that USE the macro are reported.
+                    self._register_incompatible_macro(
+                        line, ARCH_INCOMPATIBLE_INTRINSICS, ASSEMBLY_CHECKPOINTS, naive_cpp)
                 self._check_directive(result, filename,
                                       lineno, line,
                                       function_parser, PRAGMA_CHECKPOINTS, issues)
-            elif self.check_state:
-                self._check_clang(lines, lineno, line, naive_cpp, filename,
-                                  ASSEMBLY_CHECKPOINTS, ARCH_INCOMPATIBLE_INTRINSICS, issues)
+            else:
+                # Always update function tracking regardless of check_state so that
+                # func_start_lineno is correct even inside #ifdef blocks that are
+                # conditionally disabled (e.g. #ifdef X86_AVX2).
+                new_func = function_parser.parse_line(line)
+                if new_func is not None:
+                    func_start_lineno = lineno
+                elif function_parser.current_function is None:
+                    func_start_lineno = None
+
+                if self.check_state:
+                    self._check_clang(lines, lineno, line, naive_cpp, filename,
+                                      ASSEMBLY_CHECKPOINTS, ARCH_INCOMPATIBLE_INTRINSICS, issues,
+                                      func_start_lineno, intrinsic_func_seen, inline_asm_func_seen)
 
         # to extract code snippets
         for issue in issues:
@@ -153,6 +181,71 @@ class ClangSourceScanner(Scanner):
 
     def finalize_report(self, report):
         pass
+
+    def _register_incompatible_macro(self, line, ARCH_INCOMPATIBLE_INTRINSICS,
+                                      ASSEMBLY_CHECKPOINTS, naive_cpp):
+        """Register the macro name from a #define line if its body contains x64-incompatible
+        intrinsics or inline asm (standard or previously-registered user-defined).
+        Supports one level of transitivity: macros that reference other user-registered
+        macros are also registered.
+        """
+        if naive_cpp.in_other_arch_specific_code():
+            return
+        m = _DEFINE_RE.match(line.lstrip())
+        if not m:
+            return
+        macro_name = m.group(1)
+        if macro_name in self._user_incompatible_macros:
+            return
+        # Check body against known intrinsic patterns
+        for c in ARCH_INCOMPATIBLE_INTRINSICS:
+            if c.pattern_compiled.search(line):
+                self._user_incompatible_macros[macro_name] = (
+                    re.compile(r'\b' + re.escape(macro_name) + r'\b'),
+                    c.pattern,
+                )
+                return
+        # Check body against known inline asm patterns
+        for c in (ASSEMBLY_CHECKPOINTS or []):
+            if c.pattern_compiled.search(line):
+                self._user_incompatible_macros[macro_name] = (
+                    re.compile(r'\b' + re.escape(macro_name) + r'\b'),
+                    c.pattern,
+                )
+                return
+        # Check body against already-registered user macros (one level of transitivity)
+        for _, (compiled_pattern, orig_checkpoint) in self._user_incompatible_macros.items():
+            if compiled_pattern.search(line):
+                self._user_incompatible_macros[macro_name] = (
+                    re.compile(r'\b' + re.escape(macro_name) + r'\b'),
+                    orig_checkpoint,
+                )
+                return
+
+    @staticmethod
+    def _extract_function_code(lines, func_start_lineno):
+        """Return (code, end_lineno) for the function starting at func_start_lineno.
+
+        Brace-counts from the opening '{' to the matching '}'. Naive (doesn't
+        strip string literals or comments), but good enough for display.
+        Returns (None, None) when func_start_lineno is None.
+        """
+        if func_start_lineno is None:
+            return None, None
+        depth = 0
+        result = []
+        end_lineno = func_start_lineno
+        max_lineno = max(lines.keys())
+        for ln in range(func_start_lineno, max_lineno + 1):
+            if ln not in lines:
+                break
+            line = lines[ln]
+            result.append(line)
+            depth += line.count('{') - line.count('}')
+            if depth <= 0 and result:
+                end_lineno = ln
+                break
+        return (''.join(result) if result else None), end_lineno
 
     def _check_directive(self, result: PreprocessorDirective,
                          # context
@@ -185,14 +278,18 @@ class ClangSourceScanner(Scanner):
             #                                         lineno,
             #                                         result.if_line.strip(),
             #                                         checkpoint=function_parser.current_function))
-            self.check_state = result.is_support
+            # Always scan: non-aarch64 guards (#ifdef X86_AVX2, #else of #ifdef __aarch64__, etc.)
+            # also contain code that needs porting and must be checked for incompatible intrinsics.
+            self.check_state = True
 
     def _check_clang(self,
                      # context
                      lines, lineno, line, naive_cpp, filename,
                      ASSEMBLY_CHECKPOINTS, ARCH_INCOMPATIBLE_INTRINSICS,
                      # results
-                     issues: List[Issue]):
+                     issues: List[Issue],
+                     func_start_lineno=None, intrinsic_func_seen=None,
+                     inline_asm_func_seen=None):
         # blank line
         if not lines[lineno].strip() or lines[lineno].strip() == '\n':
             return
@@ -217,17 +314,29 @@ class ClangSourceScanner(Scanner):
                 match = c.pattern_compiled.search(line)
 
             if match and not naive_cpp.in_other_arch_specific_code():
+                issue_lineno = func_start_lineno if func_start_lineno is not None else lineno
+                if func_start_lineno is not None and inline_asm_func_seen is not None:
+                    if issue_lineno in inline_asm_func_seen:
+                        break
+                    inline_asm_func_seen.add(issue_lineno)
+                func_code, func_end_lineno = self._extract_function_code(lines, func_start_lineno)
                 if self.locale.startswith('zh'):
-                    issues.append(InlineAsmIssue(filename,
-                                                 lineno=lineno,
-                                                 checkpoint=c.pattern,
-                                                 description='' if not c.help_zh else '\n' + c.help_zh))
+                    issue = InlineAsmIssue(filename,
+                                           lineno=issue_lineno,
+                                           checkpoint=c.pattern,
+                                           description='' if not c.help_zh else '\n' + c.help_zh)
+                    issue.func_code = func_code
+                    issue.func_end_lineno = func_end_lineno
+                    issues.append(issue)
                     break
                 if self.locale.startswith('en'):
-                    issues.append(InlineAsmIssue(filename,
-                                                 lineno=lineno,
-                                                 checkpoint=c.pattern,
-                                                 description='' if not c.help else '\n' + c.help))
+                    issue = InlineAsmIssue(filename,
+                                           lineno=issue_lineno,
+                                           checkpoint=c.pattern,
+                                           description='' if not c.help else '\n' + c.help)
+                    issue.func_code = func_code
+                    issue.func_end_lineno = func_end_lineno
+                    issues.append(issue)
                     break
 
         #  intrinsics check
@@ -236,21 +345,57 @@ class ClangSourceScanner(Scanner):
             match = c.pattern_compiled.search(line)
 
             if match and not naive_cpp.in_other_arch_specific_code():
+                issue_lineno = func_start_lineno if func_start_lineno is not None \
+                    else find_matching_line_num(lines, lineno, c.pattern)
+                if func_start_lineno is not None and intrinsic_func_seen is not None:
+                    if issue_lineno in intrinsic_func_seen:
+                        break
+                    intrinsic_func_seen.add(issue_lineno)
+                func_code, func_end_lineno = self._extract_function_code(lines, func_start_lineno)
                 if self.locale.startswith('zh'):
-                    issues.append(IntrinsicIssue(filename,
-                                                 lineno=find_matching_line_num(lines, lineno, c.pattern),
-                                                 arch=self.arch,
-                                                 intrinsic=match.string.strip(),
-                                                 checkpoint=c.pattern,
-                                                 description='' if not c.help_zh else '\n' + c.help_zh))
+                    issue = IntrinsicIssue(filename,
+                                           lineno=issue_lineno,
+                                           arch=self.arch,
+                                           intrinsic=match.string.strip(),
+                                           checkpoint=c.pattern,
+                                           description='' if not c.help_zh else '\n' + c.help_zh)
+                    issue.func_code = func_code
+                    issue.func_end_lineno = func_end_lineno
+                    issues.append(issue)
                     break
                 if self.locale.startswith('en'):
-                    issues.append(IntrinsicIssue(filename,
-                                                lineno=find_matching_line_num(lines, lineno, c.pattern),
-                                                arch=self.arch,
-                                                intrinsic=match.string.strip(),
-                                                checkpoint=c.pattern,
-                                                description='' if not c.help else '\n' + c.help))
+                    issue = IntrinsicIssue(filename,
+                                           lineno=issue_lineno,
+                                           arch=self.arch,
+                                           intrinsic=match.string.strip(),
+                                           checkpoint=c.pattern,
+                                           description='' if not c.help else '\n' + c.help)
+                    issue.func_code = func_code
+                    issue.func_end_lineno = func_end_lineno
+                    issues.append(issue)
+                    break
+
+        #  user-defined macros that wrap x64-incompatible intrinsics
+        if self._user_incompatible_macros and not naive_cpp.in_other_arch_specific_code():
+            for macro_name, (compiled_pattern, orig_checkpoint) in self._user_incompatible_macros.items():
+                if compiled_pattern.search(line):
+                    issue_lineno = func_start_lineno if func_start_lineno is not None else lineno
+                    if func_start_lineno is not None and intrinsic_func_seen is not None:
+                        if issue_lineno in intrinsic_func_seen:
+                            break
+                        intrinsic_func_seen.add(issue_lineno)
+                    func_code, func_end_lineno = self._extract_function_code(lines, func_start_lineno)
+                    description = _("User-defined macro %s wraps x64-incompatible intrinsic: %s") % (
+                        macro_name, orig_checkpoint)
+                    issue = IntrinsicIssue(filename,
+                                           lineno=issue_lineno,
+                                           arch=self.arch,
+                                           intrinsic=macro_name,
+                                           checkpoint=orig_checkpoint,
+                                           description=description)
+                    issue.func_code = func_code
+                    issue.func_end_lineno = func_end_lineno
+                    issues.append(issue)
                     break
 
         #  cpp language check
