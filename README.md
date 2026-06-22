@@ -1,8 +1,6 @@
 # EasyWoS
 
-**EasyWoS** is a Qualcomm‑backed tool platform purpose‑built to support Windows on Snapdragon (WoS) migration.
-It provides end‑to‑end capabilities including software compatibility scanning, environment compatibility analysis, Windows ARM64 build and compilation, and application performance analysis and optimization.
-As a unified platform that brings together tools, container images, solutions, best practices, and migration guides, EasyWoS addresses the key challenges and pain points in the WoS migration journey. It helps customers efficiently migrate desktop applications to WoS and delivers a comprehensive, end‑to‑end solution to support the entire migration process.
+**EasyWoS** is an end-to-end solution that helps migrate software from the x86 architecture to the ARM64 architecture. Through static code scanning, it detects potential incompatible code issues, maps these issues to skills, and lets users complete the entire code migration simply by running /ospx:apply. By combining the capabilities of static code scanning, OpenSpec, and skills, EasyWoS provides users with a complete, end-to-end solution for code migration and performance optimization.
 
 ---
 
@@ -17,11 +15,11 @@ As a unified platform that brings together tools, container images, solutions, b
 
 ---
 
-## Migration Workflow
-![EasyWoS Migration Flow](public/static/easywos-migration-flow.png)
+## EasyWoS End-to-End lifecycle
+![EasyWoS Migration Flow](public/static/EasyWoS_Harness_Design.png)
 ---
 
-## Architecture
+## Tech Stack
 
 ### Backend
 - **Framework**: [Sanic](https://sanic.dev/) (async Python web framework)

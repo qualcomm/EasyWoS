@@ -1,0 +1,52 @@
+对话 2：/opsx:propose 创建 EasyWoS-Spec Skill
+你的指令（完整原文）：
+
+生成一个skill，这个skill的名字是EasyWoS-Spec，当OpenSpec被使用时，EasyWoS-Spec 技能也会被强制使用，用于帮助OpenSpec完善tasks.md的文档。
+EasyWoS-Spec skill的内容如下：
+背景：有一个EasyWoS工具，用于扫描需要移植的代码，并输出yaml文件，格式就和x64-to-arm64-asm-porting.yaml文件一致。
+规范集合的介绍：这里定义每一个移植规范为一个spec。EasyWoS-Spec会读取一个包含所有预定义的spec的yaml文件，格式和combined-spec-summary.yaml一样，每个spec都有一个metadata字段，用来正则匹配需要移植的代码是否适合该规范来处理，如果适合，就按照该规范(spec)描述的移植方法来进行移植。
+参数来源：EasyWoS工具生成的yaml文件。
+执行逻辑：该Skill会解析EasyWoS传来的参数yaml文件，遍历该yaml文件里的所有porting_items。之后提取每一个porting_item的context字段，然后用规范集合里的每个规范的metadata字段对该context字段做正则匹配。如果匹配成功，这个porting_item就按照这个规范(spec)描述的移植方法来移植；如果全部都匹配失败，就交给LLM自己去尝试移植。匹配完时，应该生成一个最终匹配文件，每个porting_item都添加了一个port_spec_id字段。最后，配合OpenSpec生成tasks.md文件。
+补充逻辑：有一个专家技能树(skilltree)。分两层，第一层是专家技能派遣(dispatcher)技能，只负责接收tasks.md文件的TODO命令，并将这些命令派遣给第二层的技能(skill)，这些叶子节点的skill负责真正的移植工作。专家技能树这块涉及的技能不需要去实现，你只需要指导tasks.md把porting_item传给专家技能派遣(dispatcher)技能(skill)即可。
+
+结果： 通过 OpenSpec 创建了 proposal.md、design.md、specs（3个能力规范）、tasks.md。
+
+对话 3：添加并行 agent 考虑
+你的指令：
+
+针对OpenSpec生成的文件，增加以下考量：design.md：添加并行agent处理的考虑
+
+结果： design.md 新增 Decision #6（并行 Agent 处理策略）和对应 Risks 条目。
+
+对话 4：优化建议讨论
+你的指令：
+
+针对本次openspec生成的文件，思考一下哪些实现有优化的空间，这次不要改文件，而是在当前的对话框进行总结
+
+我的回复： 总结了 10 点优化空间，涵盖匹配引擎（scope利用、多匹配、置信度）、任务生成（粒度、依赖标注）、派遣协议（结果回收、兜底约束）、并行策略（依赖检测精度、合并上限）、整体架构（解耦）。
+
+对话 5：采纳匹配引擎优化 + 混合方案决策
+你的指令：
+
+针对"匹配引擎（spec-matching-engine）"这一节提的建议，都采纳，其他的小节的建议我之前再给命令。另外，目前所说的正则匹配，你是打算用脚本的方式实现，还是直接交给大模型，并附带一些额外信息，让大模型来做匹配呢
+
+我的建议： 混合方案——脚本初筛 + LLM 精判。
+
+你的指令：
+
+修改OpenSpec生成的文件，内容如下：1.采用混合方案的修改 2.针对"匹配引擎"这一节提的建议，都采纳
+
+结果： design.md 重写 Decisions 1-4（混合匹配、scope 预分类、多匹配 port_spec_ids 数组、置信度评分），specs/spec-matching-engine 全面更新，tasks.md 新增脚本初筛和 LLM 精判模块。
+
+对话 6：强制激活机制决策
+你的指令：
+
+关于tasks.md的1.2，"EasyWoS-Spec 自动介入 tasks.md 生成阶段"，这个打算怎么实现呢
+
+我的建议： 方案 A（config.yaml rules.tasks）+ 方案 B（SKILL.md description 兜底）。
+
+你的指令：
+
+在OpenSpec生成的文件中，明确指示使用方案A
+
+结果： design.md 新增 Decision #5（通过 openspec/config.yaml 的 rules.tasks 触发），tasks.md 和 proposal.md 同步更新。

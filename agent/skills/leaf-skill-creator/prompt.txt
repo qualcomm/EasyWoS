@@ -1,0 +1,46 @@
+对话 1：/opsx:propose 创建 dispatcher-skill
+你的指令：
+
+生成dispatcher-skill
+
+结果： 通过 OpenSpec 创建了 proposal.md、design.md、specs（dispatch-routing、data-assembly、dispatch-fallback）、tasks.md。初始设计为硬编码 spec_id 范围映射（1-10 → intrinsics-x64-to-arm64, 11-17 → x64-asm-to-arm64-asm）。
+
+对话 2：添加 leaf skill 创建规范 + source/source_id 路由 + combine-specs.js
+你的指令（完整原文）：
+
+针对dispatcher-skill和easywos-spec-skill生成的OpenSpec文件，做以下修改：
+
+针对dispatcher-skill这个proposal，添加创建leaf skill的skill。每个leaf skill有一个reference目录，这个目录至少包含两个文件，一个是spec.md，该文件用来描述该leaf skill有哪些规范点可以用来移植。另外有一个spec.yaml文件，spec.yaml的格式请参考"arm64-limitations-spec-list.yaml"。LLM会根据spec.md的描述来创建对应的spec.yaml。创建leaf skill的skill就是用来描述如何生成满足"arm64-limitations-spec-list.yaml"格式的spec.yaml文件的。
+关于easywos-spec生成的*-matched.yaml文件，如何映射到lead skill。首先，规范集合文件中包含source和source_id字段。source字段代表leaf skill的名字，source_id字段代表使用该leaf skill的哪个规范（对应该leaf skill的spec.yaml里描述的规范的specs.id）。在找到leaf skill中对应的规范后，LLM会根据spec.yaml里规范的描述信息，去寻找spec.md里该规范的具体移植逻辑来进行真正的移植。
+dispatcher-skill依赖规范集合，规范集合文件的格式和"combined-spec-summary.yaml"一样。规范集合文件就是由dispatcher-skill通过combine-specs.js脚本生成的。当新创建leaf skill(会创建该leaf skill的spec.yaml)时，或者任一leaf skill的spec.yaml文件有更新时，都需要重新生成规范集合文件。
+结果： 重写了 proposal.md、design.md（路由从硬编码改为 source/source_id 动态映射）、新增 specs（leaf-skill-scaffold、spec-collection-management）、tasks.md 从 18 项扩展为 28 项。
+
+对话 3：leaf skill 创建规范独立为 skill
+你的指令：
+
+在design.md中，关于"定义 leaf skill 的标准目录结构和创建规范"，这里要创建一个skill来描述leaf skill的创建流程和规范
+
+结果： design.md Decision #5 改为创建独立的 skills/leaf-skill-creator/SKILL.md；specs 目录从 leaf-skill-scaffold 重命名为 leaf-skill-creator；tasks.md Section 7 更新为创建该独立 skill 的任务。
+
+对话 4：验证只用 intrinsics-x64-to-arm64 + 多 md 文件 + add-yaml 模式
+你的指令：
+
+关于dispatcher-skill的tasks.md的验证环节，只用intrinsics-x64-to-arm64 skill来做例子。
+另外，
+添加修改：
+1.leaf skill可以有多个描述specs的*.md文件，将这些*.md文件放到references/specs目录下。因此leaf-skill-creator在创建leaf skill时需要将references/specs目录下的每个md文件都转成对应的yaml文件。
+2.leaf-skill-creator增加一种运行形式，就是给已经创建的leaf skill，添加md对应的yaml文件。
+
+结果：
+
+目录结构从 references/spec.md + spec.yaml（单文件对）改为 references/specs/*.md + *.yaml（多文件对）
+combine-specs.js 扫描路径从 skills/*/references/spec.yaml 改为 skills/*/references/specs/*.yaml
+leaf-skill-creator 新增两种模式：create mode 和 add-yaml mode（/leaf-skill-creator <name> --add-yaml）
+验证 Section 9 改为只用 intrinsics-x64-to-arm64 为例
+tasks.md 从 28 项扩展为 30 项
+对话 5：添加 source_sub_dimension 字段
+你的指令：
+
+combined-spec-summary.yaml中，除了source和source_id字段，再加一个source_sub_dimension，这个字段用来描述leaf skill的references/sepcs目录下的md文件的名字，比如"arm64-limitations"。通过这个字段，LLM可以知道如何路由到leaf skill的某个具体yaml文件
+
+结果： 规范集合新增 source_sub_dimension 字段（yaml 文件基础名），路由从二级（source + source_id）变为三级（source → leaf skill 目录, source_sub_dimension → 具体 yaml/md 文件对, source_id → 文件内 spec 条目）。更新了 design.md（Context + Decision #2 路由流程）、dispatch-routing spec、spec-collection-management spec、data-assembly spec、tasks.md。
