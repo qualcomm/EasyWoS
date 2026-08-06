@@ -1,0 +1,484 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>Microsoft.Diagnostics.Tracing.TraceEvent.SymbolsAuthentication</name>
+    </assembly>
+    <members>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler">
+            <summary>
+            A handler for <see cref="T:System.Net.Http.HttpClient"/> that allows interception and
+            modification of requests by a chain of <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.IAsyncSymbolReaderHandler"/>
+            instances with the express purpose of supporting authentication.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler._handlers">
+            <summary>
+            A list of handlers.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler.#ctor">
+            <summary>
+            Construct a new <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler"/> instance.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler.IsDisposed">
+            <summary>
+            Gets or sets whether this instance has been disposed.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler.Dispose(System.Boolean)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler.SendAsync(System.Net.Http.HttpRequestMessage,System.Threading.CancellationToken)">
+            <summary>
+            Process the request by forwarding it to all the handlers.
+            </summary>
+            <param name="request">The request.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>The response.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler.RootHandlerAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,System.Threading.CancellationToken)">
+            <summary>
+            The root of the delegate chain.
+            Calls the inner handler and sets the response
+            on the <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.RequestContext"/> object.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>A task that completes when the response has been set.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler.ClearHandlers">
+            <summary>
+            Remove all the handlers.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthenticationHandler.AddHandler(Microsoft.Diagnostics.Symbols.Authentication.IAsyncSymbolReaderHandler)">
+            <summary>
+            Add a handler. Handlers will be called in the order they are added.
+            </summary>
+            <param name="handler">The handler to add.</param>
+            <returns>This instance for fluent chaining.</returns>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandlerDelegate">
+            <summary>
+            The delegate type that handlers invoke to chain to the next handler.
+            </summary>
+            <returns>A task.</returns>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.RequestContext">
+            <summary>
+            Context object passed to <see cref="M:Microsoft.Diagnostics.Symbols.Authentication.IAsyncSymbolReaderHandler.ProcessRequestAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandlerDelegate,System.Threading.CancellationToken)"/>
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.RequestContext._response">
+            <summary>
+            The response.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Diagnostics.Symbols.Authentication.RequestContext.Request">
+            <summary>
+            The request. Handlers may modify this as necessary
+            before or after calling the next handler in the chain.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Diagnostics.Symbols.Authentication.RequestContext.Response">
+            <summary>
+            Gets or sets the response.It is initially null, and
+            it will be set by the innermost handler. Handlers
+            may examine it and modify it, if necessary, after
+            calling the next handler in the chain.
+            </summary>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.AuthScheme">
+            <summary>
+            Enumeration of supported authentication schemes.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.AuthScheme.Basic">
+            <summary>
+            Basic authentication.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.AuthScheme.Bearer">
+            <summary>
+            Bearer token.
+            </summary>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.AuthToken">
+            <summary>
+            This is similar to <see cref="T:Azure.Core.AccessToken"/>, but it includes
+            the authentication scheme.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.#ctor(Microsoft.Diagnostics.Symbols.Authentication.AuthScheme,System.String,System.DateTime,System.String)">
+            <summary>
+            Creates a new instance of <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.AuthToken"/> using the supplied
+            parameters.
+            </summary>
+            <param name="scheme">The scheme.</param>
+            <param name="token">The token value.</param>
+            <param name="expiresOn">The token's expiry time.</param>
+            <param name="userName">Optional user name.</param>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.#ctor(System.String,System.String)">
+            <summary>
+            Create a <see cref="F:Microsoft.Diagnostics.Symbols.Authentication.AuthScheme.Basic"/> using the given username
+            and password.
+            </summary>
+            <param name="username">The username.</param>
+            <param name="password">The password.</param>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.CreateBasicFromUsernameAndPassword(System.String,System.String)">
+            <summary>
+            Creates a new <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.AuthToken"/> with the <see cref="F:Microsoft.Diagnostics.Symbols.Authentication.AuthScheme.Basic"/> 
+            scheme from a user name and password. A single token value is computed as a
+            Base-64 encoded value representing the username and password combined.
+            If no lifetime is specified, the token will be valid for 60 days.
+            </summary>
+            <param name="username">The user name.</param>
+            <param name="password">The password.</param>
+            <returns>A constructed <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.AuthToken"/>.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.TryParseFromOAuthToken(System.String,System.String,Microsoft.Diagnostics.Symbols.Authentication.AuthToken@)">
+            <summary>
+            Try to parse an <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.AuthToken"/> from an OAuth bearer token
+            as a Json Web Token.
+            </summary>
+            <param name="userName">The user name, if any.</param>
+            <param name="token">The Json Web Token (JWT) value.</param>
+            <param name="authToken">The auth token.</param>
+            <returns>True if the token could be parsed.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.FromAzureCoreAccessToken(Azure.Core.AccessToken)">
+            <summary>
+            Creates a new instance of <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.AuthToken"/> from an <see cref="T:Azure.Core.AccessToken"/>
+            using the <see cref="F:Microsoft.Diagnostics.Symbols.Authentication.AuthScheme.Bearer"/> scheme.
+            </summary>
+            <param name="token">The access token from Azure.Core</param>
+        </member>
+        <member name="P:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.Scheme">
+            <summary>
+            Gets the authentication scheme to use with this token.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.Token">
+            <summary>
+            Gets the value of the token.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.ExpiresOn">
+            <summary>
+            Gets the time when the token expires.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.UserName">
+            <summary>
+            The username. May be null.
+            </summary>
+        </member>
+        <member name="P:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.Password">
+            <summary>
+            The password part of a basic authentication token.
+            </summary>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.IAsyncSymbolReaderHandler">
+            <summary>
+            Interface for asynchronous symbol reader handlers.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.IAsyncSymbolReaderHandler.ProcessRequestAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandlerDelegate,System.Threading.CancellationToken)">
+            <summary>
+            Process the given request, modifying it if necessary and passing it on to the next handler.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="next">The next handler in the chain.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>A task that completes when desired modifications have been made.</returns>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler">
+            <summary>
+            Common base class for all <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.IAsyncSymbolReaderHandler"/> implementations.
+            Adds a logger with a handler-specific prefix.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler._log">
+            <summary>
+            The logger.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler._logPrefix">
+            <summary>
+            A prefix for all messages written by <see cref="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler.WriteLog(System.String,System.Object[])"/>.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler.#ctor(System.IO.TextWriter,System.String)">
+            <summary>
+            Creates a new <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler"/> with the given parameters.
+            </summary>
+            <param name="log">A logger. May be null.</param>
+            <param name="logPrefix">A prefix for log messages. May be null.</param>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler.ProcessRequestAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandlerDelegate,System.Threading.CancellationToken)">
+            <summary>
+            Implemented in derived classes to handle the requests.
+            Implementations should process the given request, modifying it if necessary
+            before calling the next handler.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="next">The next handler in the chain.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>A task that completes when desired modifications have been made.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler.WriteLog(System.String,System.Object[])">
+            <summary>
+            Write a line to the log, prefixed with <see cref="F:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler._logPrefix"/>.
+            </summary>
+            <param name="format">A composite format string with optional placeholders.</param>
+            <param name="args">An object array that contains zero or more objects to format and write.</param>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandler.WriteStatusLog(System.String,System.Object[])">
+            <summary>
+            Write a line to the log file and enclose it in square brackets
+            so that the status bar logger will pick it up.
+            </summary>
+            <param name="format">A composite format string with optional placeholders.</param>
+            <param name="args">An object array that contains zero or more objects to format and write.</param>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler">
+            <summary>
+            Base class for request handlers that add authorization headers to
+            requests.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.BearerScheme">
+            <summary>
+            The scheme name for Bearer tokens.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.BasicScheme">
+            <summary>
+            The scheme for Basic tokens.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.s_tokenCache">
+            <summary>
+            A cache of access tokens per authority. It is shared by all
+            <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler"/> implementations.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.#ctor(System.IO.TextWriter,System.String)">
+            <summary>
+            Constructor to be called from derived classes.
+            </summary>
+            <param name="log">A logger. May be null.</param>
+            <param name="logPrefix">A prefix for log messages. May be null.</param>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.ProcessRequestAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandlerDelegate,System.Threading.CancellationToken)">
+            <summary>
+            Handles the request and calls the next handler in the chain, if necessary.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="next">The next handler.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>A task that completes when the request has been handled.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.GetAuthTokenCoreAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandlerDelegate,System.Uri,System.Threading.CancellationToken)">
+            <summary>
+            Call the derived class to get an access token for the given authority.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="next">The next handler.</param>
+            <param name="authority">The authority to use to acquire a new token.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns></returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.AcceptTokenAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,System.Uri,Microsoft.Diagnostics.Symbols.Authentication.AuthToken,System.Threading.CancellationToken)">
+            <summary>
+            May be overridden in derived classes to handle the case when 
+            authorization with a token succeeded.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="authority">The authority.</param>
+            <param name="token">The bad token.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>A task that completes when token acceptance has finished.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.RejectTokenAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,System.Uri,Microsoft.Diagnostics.Symbols.Authentication.AuthToken,System.Threading.CancellationToken)">
+            <summary>
+            May be overridden in derived classes to handle the case when 
+            authorization failed.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="authority">The authority.</param>
+            <param name="token">The bad token.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>A task that completes when token rejection has finished.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.TryGetAuthority(System.Uri,System.Uri@)">
+            <summary>
+            Implemented in derived classes to try and determine the authority from the request URI.
+            </summary>
+            <param name="requestUri">The request URI.</param>
+            <param name="authority">The authority, if known.</param>
+            <returns>True if <paramref name="requestUri"/> is one you recognize and know the authority.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.GetAuthTokenAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandlerDelegate,System.Uri,System.Threading.CancellationToken)">
+            <summary>
+            Overridden in derived classes to get an access token for the given authority.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="next">The next handler. Derived implementations do not need to
+            call this unless they need to handle the unauthenticated response. The base
+            class will check if <see cref="P:Microsoft.Diagnostics.Symbols.Authentication.RequestContext.Response"/> is already set and
+            stop further processing.</param>
+            <param name="authority">The authority.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>An access token, if available, or null otherwise.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.AddAuthorizationHeader(System.Net.Http.HttpRequestMessage,Microsoft.Diagnostics.Symbols.Authentication.AuthToken)">
+            <summary>
+            Add an authorization header to the request using the Bearer scheme.
+            </summary>
+            <param name="request">The request to modify.</param>
+            <param name="authToken">The authorization token to add.</param>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.IsAccessTokenStillGood(Microsoft.Diagnostics.Symbols.Authentication.AuthToken@)">
+            <summary>
+            Checks if the access token is still valid vis-à-vis its lifetime.
+            </summary>
+            <param name="token">The access token.</param>
+            <returns><c>true</c> if the access token has not expired and is not
+            going to expire soon.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.TryAddCachedToken(System.Uri,Microsoft.Diagnostics.Symbols.Authentication.AuthToken@)">
+            <summary>
+            Derived classes may call this if they need to cache additional access tokens
+            for authorities other than the one returned by <see cref="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.TryGetAuthority(System.Uri,System.Uri@)"/> 
+            (which are already cached by <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler"/>).
+            </summary>
+            <param name="authority">The authority.</param>
+            <param name="token">The token.</param>
+            <returns>True if the token was successfully cached.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.TryGetCachedToken(System.Uri,Microsoft.Diagnostics.Symbols.Authentication.AuthToken@)">
+            <summary>
+            Retrieve a token from the cache. If a cached token has expired, or is close to
+            the end of its lifetime, then it will be removed from the cache and this
+            will return false.
+            </summary>
+            <param name="authority">The authority.</param>
+            <param name="token">The token.</param>
+            <returns>True if a good access token was found in the cache.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.TryGetCachedToken(System.Uri,System.Boolean,Microsoft.Diagnostics.Symbols.Authentication.AuthToken@)">
+            <summary>
+            Retrieve a token from the cache. If a cached token has expired, or is close to
+            the end of its lifetime, then it will be removed from the cache and this
+            will return false.
+            </summary>
+            <param name="authority">The authority.</param>
+            <param name="logExpiration">Whether to write a line to the log when an expired token is removed from the cache.</param>
+            <param name="token">The token.</param>
+            <returns>True if a good access token was found in the cache.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderAuthHandler.GetAuthenticationHeaderScheme(Microsoft.Diagnostics.Symbols.Authentication.AuthToken)">
+            <summary>
+            Examines the <see cref="P:Microsoft.Diagnostics.Symbols.Authentication.AuthToken.Scheme"/> value of an
+            <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.AuthToken"/> and converts it to a string suitable for
+            an HTTP Authorization header.
+            </summary>
+            <param name="authToken">The authorization token.</param>
+            <returns>A string version of the scheme.</returns>
+            <exception cref="T:System.ArgumentException">The scheme is unrecognized.</exception>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.Symweb">
+            <summary>
+            Contains constants, static properties and helper methods pertinent to Symweb.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.Symweb.Scope">
+            <summary>
+            The OAuth scope to use when requesting tokens for Symweb.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.Symweb.SymwebHost">
+            <summary>
+            The url host for Symweb.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.Symweb.TryGetAuthority(System.Uri,System.Uri@)">
+            <summary>
+            Try to find the authority endpoint for Symweb given a full URI.
+            </summary>
+            <param name="requestUri">The request URI.</param>
+            <param name="authority">The authority, if found.</param>
+            <returns>True if <paramref name="requestUri"/> represents a path to a
+            resource in Symweb.</returns>
+        </member>
+        <member name="T:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler">
+            <summary>
+            A handler that adds authorization for Symweb.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler.s_scopes">
+            <summary>
+            The value of <see cref="F:Microsoft.Diagnostics.Symbols.Authentication.Symweb.Scope"/> stored in a single element
+            array suitable for passing to
+            <see cref="M:Azure.Core.TokenCredential.GetTokenAsync(Azure.Core.TokenRequestContext,System.Threading.CancellationToken)"/>.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler.LogPrefix">
+            <summary>
+            Prefix to put in front of logging messages.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler._tokenCredential">
+            <summary>
+            A provider of access tokens.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler._tokenCredentialGate">
+            <summary>
+            Protect <see cref="F:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler._tokenCredential"/> against concurrent access.
+            </summary>
+        </member>
+        <member name="F:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler._httpClient">
+            <summary>
+            An HTTP client used to discover the authority (login endpoint and tenant) for Symweb.
+            </summary>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler.#ctor(System.IO.TextWriter,Azure.Core.TokenCredential)">
+            <summary>
+            Construct a new <see cref="T:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler"/> instance.
+            </summary>
+            <param name="tokenCredential">A provider of access tokens.</param>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler.TryGetAuthority(System.Uri,System.Uri@)">
+            <summary>
+            Try to find the authority endpoint for Symweb
+            given a full URI.
+            </summary>
+            <param name="requestUri">The request URI.</param>
+            <param name="authority">The authority, if found.</param>
+            <returns>True if <paramref name="requestUri"/> represents a path to a
+            resource in Symweb.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler.GetAuthTokenAsync(Microsoft.Diagnostics.Symbols.Authentication.RequestContext,Microsoft.Diagnostics.Symbols.Authentication.SymbolReaderHandlerDelegate,System.Uri,System.Threading.CancellationToken)">
+            <summary>
+            Get a token to access Symweb.
+            </summary>
+            <param name="context">The request context.</param>
+            <param name="next">The next handler.</param>
+            <param name="authority">The Symweb instance.</param>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>An access token, or null if one could not be obtained.</returns>
+        </member>
+        <member name="M:Microsoft.Diagnostics.Symbols.Authentication.SymwebHandler.GetTokenAsync(System.Threading.CancellationToken)">
+            <summary>
+            Get a new access token for Symweb from the <see cref="T:Azure.Core.TokenCredential"/>.
+            </summary>
+            <param name="cancellationToken">A cancellation token.</param>
+            <returns>The access token.</returns>
+        </member>
+    </members>
+</doc>

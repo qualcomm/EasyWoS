@@ -46,7 +46,9 @@ Detailed translation rules are organized by topic in `references/specs/`. Each
 | [[memory-addressing]] | Plain/offset/index/scaled/combined forms, RIP-relative addressing, arm64-only pre/post-indexed and load-pair forms, PUSH/POP→STP/LDP |
 | [[memory-model-and-atomics]] | TSO→weak ordering, ldar/stlr single-access acquire/release, mfence/lfence/sfence→dmb, lock cmpxchg→casal/LL-SC, lock and→ldclral with complemented mask |
 | [[bit-bulk-special-ops]] | bsr/bsf/popcnt/lzcnt/tzcnt, bit-test→tbz/tbnz, shrd/shld→extr, bswap→rev, REP/string→memcpy or unrolled loop, cache management, prefetch, rdtsc→cntvct_el0, pause→yield, cpuid→OS API |
-| [[simd-sse-to-neon]] | XMM/YMM/ZMM→V registers, lane suffixes (.16b/.8h/.4s/.2d), SIMD load/store, integer arithmetic, bitwise (PANDN operand swap), shifts, compares, shuffles (palignr→ext), no-direct-equivalent ops (PMOVMSKB, AES-NI), inline-asm "=w" constraint |
+| [[simd-sse-to-neon]] | XMM/YMM/ZMM→V registers, lane suffixes (.16b/.8h/.4s/.2d), SIMD load/store, integer arithmetic, bitwise (PANDN operand swap), shifts, compares, shuffles (palignr→ext), no-direct-equivalent ops (PMOVMSKB, AES-NI), inline-asm "=w" constraint, **plus the computational-correctness pitfalls** (stale lanes, butterfly overflow, saturate-vs-wrap, separable-transform pass/transpose order) |
+| [[neon-asm-performance]] | **Performance** (not correctness) of hand-written NEON asm compute kernels — the four anti-patterns that make a *correct* port run ~2× too slow: per-output `addv` horizontal reduction, per-multiply `mov`+`dup` constant materialization, over-widening the accumulator (8-bit kernels not staying `.8h` through the inner loop), full-matrix multiply where a partial butterfly belongs. Baseline armv8-a; benchmark-against-reference discipline |
+| [[neon-isa-extensions-dispatch]] | **Beyond baseline**: DotProd (`udot`/`sdot`) and i8mm (`usmmla`) extension kernels (SAD/SSD/FIR ~2× faster) + the runtime CPU-detection & tiered dispatch that make them *safe* (an extension insn on a CPU without the feature is SIGILL). Per-OS detection (Win `IsProcessorFeaturePresent` / Linux `getauxval` / Apple `sysctl`); a capability-mask-honoring dispatch that installs baseline then overrides slots per tier. Adopt only after baseline is correct+wired AND the target population has these CPUs |
 
 ## Worked example reference
 
@@ -125,3 +127,18 @@ typically a paired macro header).
    round-trip), then a benchmark to confirm the asm path is actually faster
    than the C fallback. If it isn't, the port likely has redundant flag-setting
    or missed a pre/post-indexed addressing opportunity.
+10. **Compute kernel (transform / filter / metric / DSP inner loop)? Re-tune the
+    shape, don't transliterate — see [[neon-asm-performance]].** A numerically
+    correct port that mirrored the x86 shape typically runs ~2× too slow. Before
+    declaring done, check for the four anti-patterns: per-output `addv`
+    horizontal reduction, `mov`+`dup` constant materialization on the MAC
+    critical path, over-widening the accumulator (8-bit kernels that leave `.8h`
+    too early), and full-matrix multiply where a partial butterfly belongs.
+    If a prior/upstream arm64 kernel exists, confirm throughput is ≥ it.
+11. **Baseline already tuned and the target CPUs have DotProd/i8mm? Consider the
+    extension tier — see [[neon-isa-extensions-dispatch]].** `udot`/`sdot`
+    (SAD/SSD ~2×) and `usmmla` (FIR) need three pieces together: an isolated
+    `+dotprod`/`+i8mm` translation unit, per-OS feature detection, and a
+    capability-mask-honoring dispatch. An extension instruction on a CPU without the
+    feature is SIGILL, so it is only safe behind runtime detection — never
+    smuggle `udot` into a baseline `armv8-a` object.

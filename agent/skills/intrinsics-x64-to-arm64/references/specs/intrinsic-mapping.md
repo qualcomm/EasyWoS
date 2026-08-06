@@ -186,7 +186,7 @@ vst1q_u8(static_cast<uint8_t*>(ptr) + 16, _Hi);
 
 | SSE/AVX Intrinsic | NEON Equivalent | Notes |
 |---|---|---|
-| `_mm_shuffle_epi8(a, mask)` | `vqtbl1q_u8(a, mask)` | SSSE3 byte shuffle → NEON table lookup |
+| `_mm_shuffle_epi8(a, mask)` | `vqtbl1q_u8(a, mask)` | SSSE3 byte shuffle → NEON table lookup. **Zeroing differs — only a drop-in when the index is a bounded [0,15] permutation.** SSSE3 zeroes a lane iff the index byte's **bit7** is set (index ≥ 0x80), using `index & 0x0F` otherwise; `vqtbl1q_u8` instead zeroes iff the index is **≥ 16**. They diverge for indices in [16,127] (common when the index is computed, e.g. an LUT indexed by `_mm_adds_epu8(bias, byte)`). Faithful emulation: `vbicq_u8(vqtbl1q_u8(tbl, vandq_u8(idx, vdupq_n_u8(0x0F))), vcltq_s8(idx, vdupq_n_s8(0)))`. Verified via lemire/despacer's control-char LUT (a naïve `vqtbl1q` silently despaced too few bytes). Validation note: a *careful* port may reason out `& 0x0F`/`& 0x8F` masking on its own without this warning (confirmed — a spec-driven port produced correct code unprompted); the value of this row is making that correctness **reliable** rather than dependent on the porter noticing, since the bare mapping `_mm_shuffle_epi8 → vqtbl1q_u8` followed literally on a computed index IS buggy. |
 | `_mm_unpacklo_epi8(a, b)` | `vzip1q_u8(a, b)` | Interleave low halves |
 | `_mm_unpackhi_epi8(a, b)` | `vzip2q_u8(a, b)` | Interleave high halves |
 | `_mm_unpacklo_epi16(a, b)` | `vzip1q_u16(a, b)` | |

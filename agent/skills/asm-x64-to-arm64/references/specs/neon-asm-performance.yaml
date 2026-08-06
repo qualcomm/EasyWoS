@@ -1,0 +1,187 @@
+version: "1.0"
+generated_from: skills/asm-x64-to-arm64/references/specs/neon-asm-performance.md
+description: >
+  Performance patterns for hand-written arm64 NEON assembly compute kernels
+  (transforms, FIR/IIR filters, convolution, matrix multiply, similarity
+  metrics, DSP inner loops). Baseline armv8-a — no DotProd/i8mm/SVE. Covers the
+  four anti-patterns that make a numerically correct x86->arm64 asm port run
+  roughly half speed: per-output addv horizontal reduction, per-multiply mov+dup
+  constant materialization, over-widening the accumulator (8-bit kernels that
+  promote every partial to 32-bit instead of staying .8h through the inner loop),
+  and full-matrix multiply where a butterfly decomposition belongs. General to
+  any reduction/coefficient/transform kernel; the concrete figures come from a
+  measured video-codec transform port.
+
+specs:
+  - id: 1
+    name: horizontal-reduction-addv-per-output
+    category: performance-reduction
+    description: >
+      A transform/matrix kernel that computes one output via a full-length inner
+      product, collapses the vector with addv, and stores one element — repeated
+      per output — serializes on the full-width horizontal reduction. Keep the
+      reduction vertical (lane k = output k) so no addv is needed, or use
+      pairwise addp trees that emit 4 outputs per reduce plus one wide store.
+    metadata:
+      match_rules:
+        # arm64 OUTPUT self-check: addv feeding a single-element store, per output
+        - pattern: "\\baddv\\b"
+          type: regex
+          scope: instruction
+          description: Full-width horizontal reduction — anti-pattern if repeated per output coefficient with a single-element store
+        - pattern: "\\bfmov\\s+w[0-9]+,\\s*s[0-9]+"
+          type: regex
+          scope: instruction
+          description: SIMD-to-GP scalar move after addv — fingerprint of scalarized per-output reduction
+        - pattern: "\\b(addp|sqrshrn|rshrn|sqxtn)\\b"
+          type: regex
+          scope: instruction
+          description: Preferred batched pairwise reduce / round-narrow producing multiple outputs at once
+        # x86 SOURCE trigger: horizontal-add idioms being ported
+        - pattern: "\\b(phaddd|phaddw|haddps)\\b"
+          type: regex
+          scope: instruction
+          description: x86 horizontal-add — on arm64 restructure to lane-parallel outputs, not addv-per-output
+    x64_constructs:
+      - "pmaddwd + phaddd chain producing one reduced output per store"
+      - "inner-product loop reducing to a scalar per coefficient"
+    arm64_constructs:
+      - "addp v0.4s, v0.4s, v1.4s; addp v0.4s, v0.4s, v0.4s; sqrshrn v0.4h, v0.4s, #S; str d0, [x1], #8"
+      - "arrange lane k = output k so no horizontal reduction is needed"
+    pitfalls:
+      - addv is long-latency and serializing on OoO cores; one per output coefficient is the worst transform-kernel throughput mistake
+      - a batched pairwise tree must emit >=4 outputs per reduction and use one wide store (str d/q), not a single-element strh
+    validation_criteria:
+      - No addv inside a per-output loop of a transform/matrix kernel
+      - Horizontal combines use addp/pairwise trees emitting >=4 outputs plus a single wide store
+      - Prefer restructuring so outputs land in lanes and the reduction disappears
+
+  - id: 2
+    name: constant-coefficient-by-element-lane
+    category: performance-arithmetic
+    description: >
+      Re-materializing a constant coefficient with mov+dup immediately before each
+      multiply wastes a GP register and a SIMD port per MAC and lengthens the
+      critical path. Load the coefficient table once into a vector register before
+      the loop and use the armv8-a by-element multiply form
+      (smull/smlal/mul/mla vD, vN, vM.h[lane]).
+    metadata:
+      match_rules:
+        # arm64 OUTPUT self-check: mov+dup on the multiply critical path
+        - pattern: "\\bdup\\s+v[0-9]+\\.(4s|8h|2d)\\s*,\\s*w[0-9]+"
+          type: regex
+          scope: instruction
+          description: Broadcasting a GP-loaded immediate into a vector — anti-pattern if repeated per multiply
+        - pattern: "\\bmov\\s+w[0-9]+,\\s*#"
+          type: regex
+          scope: instruction
+          description: Immediate materialized into a GP reg — flag when paired with dup before a mul/mla in a hot loop
+        - pattern: "\\b(smull|smlal|smlal2|mul|mla)\\s+v[0-9]+\\.[0-9]+[bhsd],\\s*v[0-9]+\\.[0-9]+[bhsd],\\s*v[0-9]+\\.[bhsd]\\["
+          type: regex
+          scope: instruction
+          description: Preferred by-element multiply reading the coefficient from a lane
+    x64_constructs:
+      - "pmulld/pmullw with a constant reloaded per operation"
+      - "broadcast of a scalar coefficient inside the inner loop"
+    arm64_constructs:
+      - "ld1 {v7.8h}, [x_coef]   // once, before the loop"
+      - "smull v20.4s, v16.4h, v7.h[0]; smlal v20.4s, v17.4h, v7.h[1]"
+    pitfalls:
+      - By-element lane index must be a compile-time constant; keep the coefficient vector in a low register (v0-v15) for .h[] element form
+      - A .8h/.4s constant vector holds 8/4 coefficients; use a second register rather than reverting to mov+dup when more are needed
+    validation_criteria:
+      - No "mov wN,#imm; dup vN, wN" pair on the multiply critical path
+      - Constants loaded once (ld1 / literal pool) before the loop
+      - Constant multiplies use the by-element form vN.4h, vM.h[lane]
+
+  - id: 3
+    name: partial-butterfly-over-full-matrix
+    category: performance-transform
+    description: >
+      A separable transform (DCT/DST/FFT/Hadamard, etc.) should use its butterfly
+      decomposition (for a DCT: E/O, EE/EO even/odd folds; for an FFT: radix
+      butterflies) rather than a full N x N matrix multiply. The
+      butterfly does ~half the multiplies, makes outputs land in lanes (so the
+      addv from spec 1 disappears), and structurally avoids the 16-bit overflow
+      trap by widening (saddl/ssubl) as it folds. Transpose with in-register
+      zip/uzp/trn, not per-lane strided gather/scatter.
+    metadata:
+      match_rules:
+        # arm64 OUTPUT self-check: full-matrix + strided per-lane transpose smells
+        - pattern: "ld1\\s*\\{\\s*v[0-9]+\\.h\\s*\\}\\[[0-9]+\\]"
+          type: regex
+          scope: instruction
+          description: Per-lane strided load building a column — slow transpose and a transpose-order bug source; use zip/uzp/trn
+        - pattern: "\\b(saddl|saddl2|ssubl|ssubl2)\\b"
+          type: regex
+          scope: instruction
+          description: Widening add/sub — the butterfly E/O fold that avoids 16-bit overflow
+        - pattern: "\\b(zip1|zip2|uzp1|uzp2|trn1|trn2)\\b"
+          type: regex
+          scope: instruction
+          description: In-register transpose — preferred over strided gather for pass-2 columns
+        # x86 SOURCE trigger: DCT/transform kernels
+        - pattern: "partialButterfly|_mm_madd_epi16.*dct|idct"
+          type: regex
+          scope: comment
+          description: Transform kernel being ported — use partial butterfly, not full-matrix transliteration
+    x64_constructs:
+      - "full N x N matrix multiply: N inner products of length N per row"
+      - "pass-2 column access via strided single-element loads"
+    arm64_constructs:
+      - "saddl v_e.4s, v_a.4h, v_b.4h; ssubl v_o.4s, v_a.4h, v_b.4h   // E/O fold, widened"
+      - "trn1/trn2 + zip1/zip2 in-register transpose for pass-2 columns"
+    pitfalls:
+      - Restructuring must keep the reference's rounding form (floor add #round; sshr) not srshr/sqrshrn round-half-away, or negative half-integers fail a bit-exact contract
+      - Prove the failure path first — feed a known-wrong shift and confirm the harness (with all-min/all-max/alternating boundary vectors) reports failure before trusting the green run
+      - Copy an existing correct arm64 transform kernel (one with in-register trn/zip transposes and no per-output addv) as the template, not the x86 matrix multiply
+    validation_criteria:
+      - A separable transform uses its butterfly folds (saddl/ssubl widening), not a full-matrix inner product per output
+      - Pass-2 columns come from in-register zip/uzp/trn transposes, not per-lane strided ld1/scatter
+      - Rounding/shift form matches the reference and is verified on boundary inputs with a negative-control check
+
+  - id: 4
+    name: accumulator-width-stay-narrow-when-bound-allows
+    category: performance-arithmetic
+    description: >
+      A kernel accumulating 8-bit terms (sum-of-absolute-differences,
+      sum-of-squared partials, byte-data transform/Hadamard partials) that
+      promotes every partial to 32-bit "to be safe" throws away half the
+      throughput — a .8h datapath does 2x the lanes of .4s. The safe window is
+      max_addend x addends_per_lane: an unsigned-8-bit sum in a .8h lane holds
+      ~257 byte-addends before overflow, so a block metric summing far fewer per
+      lane is provably safe in 16-bit. Keep the inner loop in .8h (uabd+uadalp)
+      and widen to .4s only at the cross-block reduction. This is the throughput
+      ceiling counterpart to the correctness floor in simd-sse-to-neon
+      (pre-combined sums must fit the lane width) — decide width in BOTH directions.
+    metadata:
+      match_rules:
+        # arm64 OUTPUT self-check: widening to 32-bit in a byte-data kernel. A
+        # single widen is normal; "over-widening" is a semantic judgement (is it
+        # earlier than the magnitude bound needs?) left to the LLM refine step —
+        # so these fire broadly to SURFACE the spec, not to decide it.
+        - pattern: "\\b(uaddl2?|saddl2?|uaddw2?|saddw2?)\\s+v\\d+\\.4s"
+          type: regex
+          scope: instruction
+          description: Widening add to 32-bit — surface the accumulator-width tradeoff; LLM checks whether it is earlier than the bound requires
+        - pattern: "\\b(uadalp|uaddlp)\\s+v\\d+\\.4s"
+          type: regex
+          scope: instruction
+          description: Pairwise widen-accumulate to 32-bit — correct at the reduction boundary, wasteful if done every inner iteration
+        # x86 SOURCE trigger: byte-SAD/metric idiom whose NEON accumulator width is the choice
+        - pattern: "_mm(256|512)?_sad_epu8|psadbw"
+          type: regex
+          scope: instruction
+          description: x86 byte SAD — on NEON the .8h-vs-.4s accumulator width is a throughput choice (stay narrow while the bound allows)
+      # This spec is a positive/negative balance of the overflow rule; the
+      # x86 source has no counterpart (accumulator width is a NEON choice).
+    x64_constructs:
+      - "// no x64 counterpart — SSE PSADBW etc. accumulate in a fixed width; NEON chooses lane width"
+    arm64_constructs:
+      - "uabd v4.8h,v0.8h,v1.8h; ... ; uadalp v16.4s,v4.8h   // inner .8h, widen once at block boundary"
+    pitfalls:
+      - Widen rule is two-directional — too narrow wraps (wrong numbers), too wide halves throughput; both are decided by max_addend x addends_per_lane
+      - Unsigned-8-bit in .8h is safe to ~257 addends/lane; verify the block's addend count against that before staying narrow
+    validation_criteria:
+      - 8-bit metric/reduction kernels keep the inner accumulation in .8h, widening to .4s only at the block/reduction boundary — not a uaddl per partial
+      - The chosen accumulator width is justified by max_addend x addends_per_lane against the type's range

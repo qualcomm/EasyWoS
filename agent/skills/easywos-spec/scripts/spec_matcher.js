@@ -18,9 +18,21 @@ const yaml = require("js-yaml");
 // Scope pre-classification
 // ---------------------------------------------------------------------------
 
-const INSTRUCTION_RE = /^\s*(?:;[^\n]*\n)?\s*(push|pop|mov|add|sub|inc|dec|mul|imul|div|idiv|neg|not|and|or|xor|shl|shr|sar|cmp|test|jmp|je|jne|jz|jnz|jb|ja|jbe|jae|jl|jg|jle|jge|call|ret|nop|lea|movups|movaps|movdqa|movdqu|movu|movhlps|movlhps|lddqu|addps|addss|subps|mulps|divps|shufps|unpcklps|unpckhps|pslld|psrld|psllw|psrlw|psllq|psrlq|pslldq|psrldq|psraw|psrad|por|pand|pandn|pshufb|pshufd|pshuflw|pshufhw|adc|sbb|loop|rep|stp|ldp|ldr|str|bl|b\.\w+|cbz|cbnz|fadd|fmul|fsub|fdiv|faddp|ld1|st1|ext|dup|movq|movd|pxor|paddb|paddw|paddd|paddq|psubb|psubw|psubd|psubq|psadbw|pmaddwd|pmaddubsw|pmulhw|pmulhuw|pmulhrsw|pmullw|pmulld|pmuludq|packuswb|packsswb|packssdw|packusdw|punpcklbw|punpckhbw|punpcklwd|punpckhwd|punpckldq|punpckhdq|punpcklqdq|punpckhqdq|pabsb|pabsw|pabsd|pavgb|pavgw|pmaxsw|pmaxub|pmaxsb|pmaxuw|pmaxsd|pminsw|pminub|pminsb|pminuw|pminsd|pcmpeqb|pcmpeqw|pcmpeqd|pcmpgtb|pcmpgtw|pcmpgtd|pmovmskb|phaddw|phaddd|phsubw|palignr|pblendw|pblendvb|pmull|aese|aesd|aesmc|sha1c|sha1h|sha256h)\b/i;
+const INSTRUCTION_RE = /^\s*(?:;[^\n]*\n)?\s*(push|pop|mov|add|sub|inc|dec|mul|imul|div|idiv|neg|not|and|or|xor|shl|shr|sar|cmp|test|jmp|je|jne|jz|jnz|jb|ja|jbe|jae|jl|jg|jle|jge|call|ret|nop|lea|movups|movaps|movdqa|movdqu|movu|movhlps|movlhps|lddqu|addps|addss|subps|mulps|divps|shufps|unpcklps|unpckhps|pslld|psrld|psllw|psrlw|psllq|psrlq|pslldq|psrldq|psraw|psrad|por|pand|pandn|pshufb|pshufd|pshuflw|pshufhw|adc|sbb|loop|rep|stp|ldp|ldr|str|bl|b\.\w+|cbz|cbnz|fadd|fmul|fsub|fdiv|faddp|ld1|st1|ext|dup|movq|movd|pxor|paddb|paddw|paddd|paddq|psubb|psubw|psubd|psubq|psadbw|pmaddwd|pmaddubsw|pmulhw|pmulhuw|pmulhrsw|pmullw|pmulld|pmuludq|packuswb|packsswb|packssdw|packusdw|punpcklbw|punpckhbw|punpcklwd|punpckhwd|punpckldq|punpckhdq|punpcklqdq|punpckhqdq|pabsb|pabsw|pabsd|pavgb|pavgw|pmaxsw|pmaxub|pmaxsb|pmaxuw|pmaxsd|pminsw|pminub|pminsb|pminuw|pminsd|pcmpeqb|pcmpeqw|pcmpeqd|pcmpgtb|pcmpgtw|pcmpgtd|pmovmskb|phaddw|phaddd|phsubw|palignr|pblendw|pblendvb|pmull|aese|aesd|aesmc|sha1c|sha1h|sha256h|udot|sdot|usdot|usmmla|uabd|sabd|uadalp|uaddlp|uaddlv|addv|smull2|smlal|smlal2|umull|umull2|uxtl|sxtl|uaddl|uaddl2|saddl|saddl2|uaddw|uaddw2|saddw|saddw2|usubl|usubl2|ssubl|ssubl2|zip1|zip2|uzp1|uzp2|trn1|trn2|sqrshrn|sqrshrun|uqrshrn|srshr|sshr|ushr|sqxtn|sqxtun|uqxtn|xtn|movi|smax|smin|umax|umin)\b/i;
 
 const INTRINSIC_CALL_RE = /_mm(?:256|512)?_\w+\s*\(|v(?:ld1|st1|add|sub|mul|dup|get_lane|set_lane|reinterpret|combine)q?_\w+\s*\(/i;
+
+// A quoted C string literal whose contents are a single AArch64 asm line, as
+// emitted by GCC/Clang inline asm: "pmull\tv0.1q, v8.1d, v5.1d\n\t". The
+// mnemonic sits just inside the opening quote; operands follow a tab, a
+// literal "\t"/"\n", or spaces. Matches the inline-asm instruction stream only,
+// NOT ordinary C string literals (which do not begin with an asm mnemonic
+// followed by an asm operand separator).
+const INLINE_ASM_LINE_RE = /^\s*"\s*(?:ld1|st1|ldp|stp|ldr|str|movi|mov|dup|ext|eor|and|orr|bic|add|sub|shl|ushr|sshr|shrn|rbit|rev\d*|tbl|tbx|zip1|zip2|uzp1|uzp2|trn1|trn2|pmull2|pmull|aese|aesd|aesmc|aesimc|sha1[a-z]*|sha256[a-z]*|cmeq|cmgt|cmhi|umull2|umull|smull2|smull|mul|mla|mls|neg|not|cnt|addv|uaddlv|bsl|zip|ins|smov|umov|fmov)\b[^"]*(?:\\t|\\n|\s)/i;
+
+// The asm-block framing lines: the `asm(`/`__asm__ __volatile__(` opener and
+// the `: "+r"(...)`/`: "memory","cc",...` operand/clobber constraint lines.
+const INLINE_ASM_FRAME_RE = /^\s*(?:__asm__|asm)\b.*\(|^\s*:\s*(?:\[|"[+=]?r"|"memory"|"cc"|"v\d)/;
 
 const GENERIC_FUNC_CALL_RE = /\b\w+\s*\([^)]*\)/;
 
@@ -38,6 +50,7 @@ function classifyLine(line) {
   if (COMMENT_RE.test(stripped)) return "comment";
   if (PREPROCESSOR_RE.test(stripped)) return "preprocessor";
   if (DIRECTIVE_RE.test(stripped)) return "directive";
+  if (INLINE_ASM_LINE_RE.test(stripped) || INLINE_ASM_FRAME_RE.test(stripped)) return "inline_asm";
   if (DECLARATION_RE.test(stripped)) return "declaration";
   if (INTRINSIC_CALL_RE.test(stripped) && !INSTRUCTION_RE.test(stripped)) return "intrinsic_call";
   if (INSTRUCTION_RE.test(stripped)) return "instruction";
@@ -67,17 +80,18 @@ const SCOPE_MAP = {
   function_declaration: new Set(["declaration", "function_call"]),
   preprocessor: new Set(["preprocessor"]),
   directive: new Set(["directive"]),
-  expression: new Set(["expression", "instruction", "declaration", "intrinsic_call", "function_call"]),
+  expression: new Set(["expression", "instruction", "declaration", "intrinsic_call", "function_call", "inline_asm"]),
   type_or_instance: new Set(["declaration", "expression"]),
   variable_reference: new Set(["expression", "instruction", "declaration"]),
   constant_reference: new Set(["expression", "declaration", "preprocessor"]),
   algorithm_call: new Set(["function_call", "intrinsic_call", "expression"]),
   function_name: new Set(["declaration", "directive", "function_call"]),
+  inline_asm: new Set(["inline_asm"]),
 };
 
 const ALL_CODE_SCOPES = new Set([
   "instruction", "declaration", "intrinsic_call", "function_call",
-  "preprocessor", "directive", "expression",
+  "preprocessor", "directive", "expression", "inline_asm",
 ]);
 
 function getEligibleScopes(ruleScope) {

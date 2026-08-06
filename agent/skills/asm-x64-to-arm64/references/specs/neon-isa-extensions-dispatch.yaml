@@ -1,0 +1,111 @@
+version: "1.0"
+generated_from: skills/asm-x64-to-arm64/references/specs/neon-isa-extensions-dispatch.md
+description: >
+  Beyond-baseline tier: DotProd (armv8.2-a+dotprod, udot/sdot) and i8mm
+  (armv8.6-a, usmmla/usdot) NEON extension kernels plus the runtime CPU
+  detection + tiered dispatch needed to select them safely. ~2x on MAC-heavy
+  work (SAD, SSD/SSE, FIR) vs baseline armv8-a. Requires three pieces together:
+  isolated extension TU, per-OS feature detection, capability-mask-honoring dispatch.
+  An extension instruction on a CPU lacking the feature is SIGILL, so it is only
+  safe behind runtime detection. General to any MAC/SAD-heavy 8-bit kernel
+  (block metrics, SSD, convolution, integer GEMM); the recipes are drawn from a
+  mature open-source video-codec arm64 tree.
+
+specs:
+  - id: 1
+    name: runtime-cpu-dispatch-tiers
+    category: performance-dispatch
+    description: >
+      Reaching an extension speedup needs three pieces: (A) the udot/usmmla
+      kernel in a TU compiled with -march=...+dotprod/+i8mm, isolated from
+      baseline objects; (B) per-OS feature detection (Windows
+      IsProcessorFeaturePresent PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE / Linux
+      getauxval HWCAP_ASIMDDP / Apple sysctl FEAT_DotProd); (C) a dispatch that
+      installs baseline first then lets each available tier overwrite the slots
+      it beats. A dispatch that discards its capability mask (e.g. (void)caps;)
+      can never select any tier. i8mm implies DotProd; SVE implies both; set
+      implied flags too.
+    metadata:
+      match_rules:
+        # arm64 OUTPUT self-check: a dispatch stub that discards its capability
+        # parameter (any (void)<mask> cast) can never select an extension tier.
+        - pattern: "\\(void\\)\\s*\\w*(cpu|caps|mask|flags|feature)\\w*"
+          type: regex
+          scope: expression
+          description: Dispatch discards its capability/cpu-mask parameter — structurally blocks every extension tier
+        # The strongest project-agnostic signals are the OS detection APIs.
+        - pattern: "IsProcessorFeaturePresent\\s*\\(\\s*PF_ARM_(V82_DP|SVE_I8MM|SVE)_INSTRUCTIONS_AVAILABLE"
+          type: regex
+          scope: function_call
+          description: Windows arm64 extension detection (DotProd / i8mm / SVE)
+        - pattern: "getauxval\\s*\\(\\s*AT_HWCAP2?\\s*\\)|HWCAP_ASIMDDP|HWCAP2_I8MM"
+          type: regex
+          scope: function_call
+          description: Linux arm64 extension detection via hwcaps
+        - pattern: "hw\\.optional\\.arm\\.FEAT_(DotProd|I8MM)"
+          type: regex
+          scope: string
+          description: Apple arm64 extension detection via sysctlbyname
+    x64_constructs:
+      - "x86 runtime dispatch via cpuid feature bits + function-pointer table"
+      - "__builtin_cpu_supports(\"avx2\") style capability gate selecting SSE4/AVX2/AVX512 kernels"
+    arm64_constructs:
+      - "if (caps & CAP_NEON)         setup_neon(t);     // baseline fills all slots"
+      - "if (caps & CAP_NEON_DOTPROD) setup_dotprod(t);  // overrides MAC/SAD slots"
+      - "Windows: if (IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)) caps |= CAP_NEON_DOTPROD;"
+      - "Linux: if (getauxval(AT_HWCAP) & HWCAP_ASIMDDP) caps |= CAP_NEON_DOTPROD;"
+    pitfalls:
+      - An extension instruction on a CPU without the feature is SIGILL — the ONLY thing making it safe is detection+dispatch actually gating it
+      - A dispatch that discards its capability mask ((void)caps;) can never reach any extension tier — the biggest structural blocker in a baseline-only port
+      - Detection must fail closed — if the SDK lacks a PF_* macro, #if defined() compiles it out and the capability bit stays unset (baseline), never assumed present
+      - Later tier must only override the slots it beats, leaving the rest at baseline; set implied flags (i8mm implies DotProd)
+    validation_criteria:
+      - Extension kernels live in a TU compiled with the matching -march (+dotprod/+i8mm), isolated from baseline objects
+      - The dispatch routine branches on the capability mask per tier, baseline installed first
+      - Per-OS detection present and gated on both SDK-macro and HAVE_* compile guards
+      - Verified on a non-DotProd core that the baseline path still runs (no SIGILL)
+
+  - id: 2
+    name: sad-ssd-via-udot
+    category: performance-arithmetic
+    description: >
+      DotProd collapses the SAD/SSD inner MAC. SAD: uabd then udot against an
+      all-ones vector sums 16 bytes into 4xu32 in two instructions, straight to
+      a u32 accumulator (no u16->u32 fold). SSD/SSE: udot of the abs-diff with
+      itself squares+accumulates in one instruction. Baseline needs 3 insns
+      (SAD) / 5 insns (SSD) per 16 bytes; this is the biggest single-kernel win.
+    metadata:
+      match_rules:
+        # arm64 OUTPUT self-check: presence of udot/sdot (extension kernel), and the
+        # baseline multi-insn shapes that a DotProd kernel would replace.
+        - pattern: "\\b(udot|sdot)\\s+v[0-9]+\\.4s"
+          type: regex
+          scope: instruction
+          description: DotProd accumulate into 4xu32 — the SAD/SSD extension kernel core
+        - pattern: "\\buabd\\b[\\s\\S]{0,40}\\b(uaddlp|uadalp)\\b"
+          type: regex
+          scope: instruction
+          description: Baseline abs-diff widening chain — candidate to replace with uabd+udot on DotProd cores
+        - pattern: "\\bumull2?\\b[\\s\\S]{0,60}\\buadalp\\b"
+          type: regex
+          scope: instruction
+          description: Baseline square-accumulate (SSD) — candidate to replace with udot(x,x)
+        # x86 SOURCE trigger: SAD / VNNI dot-product being ported
+        - pattern: "_mm(256|512)?_sad_epu8|_mm(256|512)?_dpbusd(s)?_epi32|psadbw"
+          type: regex
+          scope: instruction
+          description: x86 SAD / VNNI dot-product — on DotProd arm64 maps to uabd+udot / udot
+    x64_constructs:
+      - "psadbw / _mm_sad_epu8 for SAD"
+      - "VNNI _mm_dpbusd_epi32 for byte dot-product"
+    arm64_constructs:
+      - "movi v1.16b,#1; uabd v4.16b,v2.16b,v3.16b; udot v0.4s,v4.16b,v1.16b   // SAD"
+      - "uabd v1.16b,v16.16b,v17.16b; udot v0.4s,v1.16b,v1.16b                  // SSD"
+    pitfalls:
+      - udot/sdot are armv8.2-a+dotprod — only legal behind runtime detection (see spec 1); SIGILL otherwise
+      - All-ones multiplier vector for SAD must be set up once outside the loop, not per iteration
+      - For signed 8-bit coefficients (FIR/convolution), bias u8 samples by -128 and compensate with a constant (coeff_sum*128) term
+    validation_criteria:
+      - DotProd SAD uses uabd + udot vs an all-ones vector into a u32 accumulator
+      - DotProd SSD uses udot of the abs-diff with itself
+      - The kernel is numerically identical to the baseline, verified with boundary vectors + a negative control

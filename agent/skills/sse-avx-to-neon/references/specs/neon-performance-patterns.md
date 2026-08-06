@@ -70,6 +70,40 @@ uint32x4_t acc3 = vdupq_n_u32(0);
 uint32x4_t acc = vaddq_u32(vaddq_u32(acc0, acc1), vaddq_u32(acc2, acc3));
 ```
 
+**This applies to FLOAT accumulators too — and a faithful SSE→NEON port silently
+inherits the stall.** Many SSE kernels (dot products, FIR filters, norms) keep a
+single `__m128 sum` chained across the loop because on x86 it was "good enough".
+Transliterating that 1:1 to a single `float32x4_t sum` with `vaddq_f32`/`vmlaq_f32`
+makes every iteration wait on the previous FADD/FMLA (**latency ~3-4 cyc**), even
+though the core has 2+ FP pipes idle — the loop is **latency-bound, not
+throughput-bound**. Use ≥4 independent `float32x4_t` accumulators with `vfmaq_f32`
+(fused multiply-add, one rounding) and a single `vaddvq_f32` reduce at the end
+(§6):
+
+```c
+// FAST: independent FP accumulator chains, fused MAC, reduce once
+float32x4_t s0=vdupq_n_f32(0), s1=vdupq_n_f32(0), s2=vdupq_n_f32(0), s3=vdupq_n_f32(0);
+for (i = 0; i + 16 <= len; i += 16) {
+    s0 = vfmaq_f32(s0, vld1q_f32(a+i),    vld1q_f32(b+i));
+    s1 = vfmaq_f32(s1, vld1q_f32(a+i+4),  vld1q_f32(b+i+4));
+    s2 = vfmaq_f32(s2, vld1q_f32(a+i+8),  vld1q_f32(b+i+8));
+    s3 = vfmaq_f32(s3, vld1q_f32(a+i+12), vld1q_f32(b+i+12));
+}
+float r = vaddvq_f32(vaddq_f32(vaddq_f32(s0,s1), vaddq_f32(s2,s3)));  // reduce once (§6)
+```
+
+**Measured (speexdsp `inner_product_single` FIR resampler kernel, Windows ARM64
+clang-cl, 128 taps, 550M calls): faithful single `float32x4_t` accumulator
+4.69 s CPU vs 4-accumulator+`vfmaq` 2.35 s CPU — ~1.65-2× faster**, both verified
+against a scalar dot-product oracle (identical result) and both 99.4% self-time in
+the inlined kernel (no fallback).
+
+**Profiler signature (how §8.5 surfaces this):** the kernel is a top self-time leaf
+doing genuine FP work (no fallback, no libm), but per-iteration throughput is far
+below the core's FP-pipe width — the tell is that adding independent accumulators
+(A/B, paired back-to-back per the measurement-discipline rule) yields a large
+speedup with byte-identical output.
+
 ### 4. Alignment Preamble Before the SIMD Loop
 
 Align `src` to a natural SIMD boundary (16 or 32 bytes) before entering the vectorized loop to avoid cacheline-crossing penalties:
@@ -102,54 +136,304 @@ else
 
 ---
 
-## Project-Specific Extensions (zlib-ng)
+## Compute-Kernel Patterns (DSP / transforms / filters)
 
-The patterns above use standard NEON intrinsics. zlib-ng layered additional wrappers on top — do not apply these outside that codebase.
+Patterns §1–§5 target **streaming/bandwidth-bound** loops (checksums, compare,
+hash, copy — one uniform op over a large array). A second family of hot kernels
+is **compute-bound**: transforms (DCT/DST/FFT), FIR/IIR filters, convolution,
+matrix multiply, correlation/similarity metrics — many multiply-accumulates over
+small fixed-size blocks. These have their own two anti-patterns when an
+`_mm_*`/`_mm256_*` kernel is transcribed to NEON intrinsics. (The hand-written
+**asm** form of these lives in `asm-x64-to-arm64` →
+`neon-asm-performance`; this is the intrinsics form.)
 
-### `_ex` Alignment-Hint Variants
+### 6. Horizontal Reduction: Reduce 4 Outputs at Once, Not 1
 
-zlib-ng's `neon_intrins.h` defines `_ex` suffixed wrappers that accept an alignment hint in bits. Use them only when the pointer is actually aligned to that boundary:
+An inner-product/reduction kernel computes each output by multiplying across a
+vector, then summing the vector to a scalar. The x86 shape reaches for a
+horizontal add (`_mm_hadd_epi32`, or the SSE "shuffle + add" reduction idiom) per
+output. Transcribed literally, each output triggers a **full-width horizontal
+reduction** (`vaddvq_s32`) plus a single-element store — a long-latency,
+serializing op repeated N times.
 
 ```c
-// Standard NEON (portable)
-uint8x16x4_t d0_d3 = vld1q_u8_x4(buf);
-
-// zlib-ng only — 256-bit = 32-byte alignment hint
-uint8x16x4_t d0_d3 = vld1q_u8_x4_ex(buf, 256);
-vst1q_u8_x4_ex(dst, d0_d3, 256);
+// BAD: full-width horizontal reduce per output element
+int32x4_t prod = vmull_...            // partial products for ONE output
+int32_t   out  = vaddvq_s32(prod);    // full-width reduce -> 1 scalar
+dst[k] = out;                         // one store, repeat per output
 ```
 
-### `ALIGN_DIFF` and `OPTIMAL_CMP` Macros
+```c
+// GOOD: keep the reduction vertical — lane k accumulates output k, so a whole
+// vector of outputs is produced without any horizontal reduction:
+acc = vmlal_lane_s16(acc, in, coeffs, 0);   // 4 outputs accumulate in 4 lanes
+// ...
+vst1q_s16(dst, vqrshrn_high_...(narrow(acc))); // narrow+store 4+ outputs at once
 
-These are zlib-ng internal macros, not standard C:
+// If a horizontal combine is truly unavoidable, use PAIRWISE adds that yield 4
+// outputs per reduction, not vaddvq per output:
+int32x4_t r = vpaddq_s32(vpaddq_s32(t0, t1), vpaddq_s32(t2, t3)); // {Σt0..Σt3}
+```
+
+`vaddvq_*` (and the `vadd` + `vget_lane` reduction chain) is the intrinsics twin
+of asm `addv`; one-per-output is the single worst throughput mistake in this
+kernel class. Arrange lanes so output `k` lives in lane `k`, or reduce with
+`vpaddq`/`vpadd` trees that emit ≥4 results per reduction.
+
+**Validation**
+- No `vaddvq_*` (or `vadd`+`vget_lane` reduction) inside a per-output loop of a
+  reduction/transform kernel.
+- Outputs are produced a vector at a time (lane k = output k), or horizontal
+  combines use `vpaddq`/`vpadd` trees emitting ≥4 outputs per reduction.
+
+### 7. Fixed Coefficients: Load Once, Multiply by Lane
+
+A fixed-coefficient kernel (FIR taps, transform matrix, colour-conversion
+constants, fixed-point scales) that transcribes each x86 broadcast-then-multiply
+(`_mm_set1_epi16(c)` + `_mm_mullo_epi16`) into a per-multiply `vdupq_n_*` rebuilds
+the constant vector on the critical path every MAC.
 
 ```c
-// zlib-ng alignment preamble
-size_t align_diff = MIN(ALIGN_DIFF(src, 32), len);
-if (align_diff) {
-    scalar_process(src, align_diff);
-    src += align_diff;
-    len -= align_diff;
+// BAD: rebuild the constant vector before every multiply
+acc = vmlaq_s32(acc, in, vdupq_n_s32(COEFF[k]));   // dup per multiply
+
+// GOOD: load the coefficient vector once, index it by lane
+int16x8_t c = vld1q_s16(COEFF);        // once, outside the loop
+acc = vmlal_lane_s16(acc, in, vget_low_s16(c), 0); // × c[0], no dup
+acc = vmlal_lane_s16(acc, in, vget_low_s16(c), 1); // × c[1]
+```
+
+The lane-indexed multiply family (`vmul*_lane*` / `vmla*_lane*` / `vmull_lane*`)
+takes the multiplier straight from a lane of a preloaded vector — no `vdupq_n`,
+no extra register, shorter dependency chain. This is the intrinsics twin of the
+asm by-element `mul vD, vN, vM.h[lane]`.
+
+**Pitfalls**
+- The lane index must be a compile-time constant; `vmul*_laneq_*` indexes a
+  128-bit vector (8 `int16` lanes), `vmul*_lane_*` a 64-bit half (4 lanes).
+- If the kernel needs more coefficients than one vector holds, use a second
+  vector rather than reverting to per-multiply `vdupq_n`.
+
+**Validation**
+- No `vdupq_n_*` of a constant on the multiply critical path; the coefficient
+  vector is loaded once before the loop.
+- Constant multiplies use the `_lane`/`_laneq` indexed form.
+
+### 8. Separable Transforms: Butterfly, Not Full-Matrix Multiply
+
+A separable transform (DCT/DST/FFT/Hadamard) coded as a full N×N matrix multiply
+does ~N² multiplies per row and forces the §6 per-output reduction. Its butterfly
+decomposition (even/odd `E/O` folds for a DCT; radix butterflies for an FFT) does
+a fraction of the multiplies, lands outputs in lanes (so §6's reduction
+disappears), and — critically for correctness — **widens as it folds**
+(`vaddl_s16`/`vsubl_s16` to `int32x4_t`), structurally avoiding the
+pre-combined-sum overflow trap that a bolt-on-widening full-matrix port keeps
+hitting.
+
+```c
+int32x4_t e = vaddl_s16(a, b);   // E = a + b, widened to 32-bit immediately
+int32x4_t o = vsubl_s16(a, b);   // O = a - b
+// ... EE/EO folds, then vmlal_lane the folded groups by the half-matrix ...
+```
+
+Transpose the second pass with `vzipq`/`vuzpq`/`vtrnq` (or `vld4`/`vst4`
+de/interleave), not a per-lane strided gather. And when the contract is
+bit-exact, keep the reference's rounding form (floor vs `vrshrn` round-half-away)
+— see the correctness note in `asm-x64-to-arm64` → `simd-sse-to-neon`
+("separable transforms must mirror the reference's pass/transpose order").
+
+**Validation**
+- A separable transform uses its butterfly folds (`vaddl`/`vsubl` widening), not
+  a full-matrix inner product per output.
+- Second-pass transpose uses `vzip`/`vuzp`/`vtrn`/`vld4`, not per-lane gather.
+
+### 9. Don't Reach NEON Through a Generic `_mm_shuffle_epi8` Shim — Use the Native Op
+
+When an x86 SIMD kernel is ported by routing each `_mm_*` intrinsic through a
+**generic SSE→NEON translation shim** (a header that maps `_mm_shuffle_epi8` to
+`vqtbl1q_u8` + low-nibble mask + `vbic` to emulate PSHUFB's zeroing, `_mm_add_epi32`
+to `vaddq_u32`, `_mm_hadd_epi32` to `vpaddq`, etc.), the result is **correct but
+slow**. The shim is written to reproduce *arbitrary* x86 semantics, so it emits
+extra masking/table-lookup instructions the specific operation never needed. A
+profiler shows the kernel hot even though "it's already using NEON."
+
+The fix is to recognise the *operation* and emit the **dedicated NEON instruction**,
+not the general shuffle. The canonical case is a one's-complement / checksum /
+byteswap-accumulate loop:
+
+```c
+// SLOW (correct): x86 path reached via a generic shim
+//   _mm_shuffle_epi8(block, swap16_mask)  ->  vqtbl1q_u8 + mask + vbic   (per 16B)
+//   widen + _mm_add_epi32                 ->  vaddq_u32
+//   _mm_hadd_epi32 x2                     ->  vpaddq_u32 reductions in the loop
+
+// FAST: native NEON, recognise "byteswap each 16-bit word, then widen-accumulate"
+uint32x4_t acc0 = ..., acc1 = ...;                 // 2 independent accumulators (§3)
+for (; i + 64 <= len; i += 64) {                   // 64B/iter
+    acc0 = vpadalq_u16(acc0, vreinterpretq_u16_u8(vrev16q_u8(vld1q_u8(p))));      // p+0
+    acc1 = vpadalq_u16(acc1, vreinterpretq_u16_u8(vrev16q_u8(vld1q_u8(p+16))));   // p+16
+    acc0 = vpadalq_u16(acc0, vreinterpretq_u16_u8(vrev16q_u8(vld1q_u8(p+32))));   // p+32
+    acc1 = vpadalq_u16(acc1, vreinterpretq_u16_u8(vrev16q_u8(vld1q_u8(p+48))));   // p+48
+    p += 64;
 }
-
-// zlib-ng copy-path fallback based on hardware capability
-#if OPTIMAL_CMP >= 32
-    return impl_copy(adler, dst, src, len);
-#else
-    uint32_t result = impl_no_copy(adler, src, len);
-    memcpy(dst, src, len);
-    return result;
-#endif
+// masked n%16 tail via vcltq_u8(lane_idx, vdupq_n_u8(rem)); then:
+uint32_t sum = vaddvq_u32(acc0) + vaddvq_u32(acc1);                              // reduce once (§6)
 ```
 
-### Deferred Multiply with `tap_table`
+| generic-shim path | native NEON | why the native op wins |
+|---|---|---|
+| `_mm_shuffle_epi8` byteswap mask → `vqtbl1q_u8` + mask + `vbic` | `vrev16q_u8` | one instruction reverses bytes within every 16-bit word; no table, no zeroing mask |
+| shuffle→widen→`vaddq_u32` (3 ops) | `vpadalq_u16` | pairwise-adds 16-bit lanes into 32-bit *and* accumulates, in one instruction |
+| `_mm_hadd_epi32` per block | `vaddvq_u32` once after loop | horizontal reduce belongs outside the loop (§6), not per iteration |
+| `_mm_shuffle_epi8` nibble-LUT popcount (2 shuffles + mask + shift per vec) → `vqtbl1q_u8`×2 | `vcntq_u8` | ARM has a HARDWARE per-byte popcount; the x86 shuffle-LUT exists only because pre-AVX512 x86 lacks one — prefer the native op. **Measured on a spec-driven A/B (WojciechMula/sse-popcount `popcnt_SSE_lookup`, Windows ARM64 clang-cl, 1 MiB, warm paired back-to-back, identical work): native `vcntq_u8` ~0.42 s vs faithful vqtbl1q-LUT ~0.48 s — ~12% faster**, both count-identical to scalar. (An earlier hand-written micro-bench reported ~2.4×; the fair spec-driven, identical-workload A/B shows ~12% — the LUT path is also efficient and the 1 MiB loop is partly memory-bound. Direction holds: use `vcntq_u8`.) |
+| 64-bit multiply-high built from four `_mm_mul_epu32` (32×32→64) + shuffles + carry → four `vmull_u32` + carry | `__umulh` per lane (ARM64 `UMULH`) | ARM64 has a HARDWARE 64×64→high-64 multiply (`UMULH`); SSE2 has none, so x86 *must* synthesize mulhi from four 32-bit partials — transliterating those four `vmull_u32` reproduces work one `UMULH` does. Extract lanes, `__umulh` each, recombine. **Measured (ridiculousfish/libdivide `libdivide_mullhi_u64_vec128`, Windows ARM64 clang-cl, 560M divides: faithful 4×`vmull_u32` emulation 6.05 s / CPU 5819 ms vs per-lane `__umulh` 4.07 s / CPU 3901 ms — ~1.5× faster**, both verified 800K/0 vs libdivide's scalar oracle and doing identical work. NB: this is a 2-lane u64 kernel, so scalar-per-lane wins; for wider elementwise u32 mulhi `vmull_u32` on gathered lanes is still the right vector op. |
 
-The weighted-sum pattern in zlib-ng uses `tap_table` (adler32 position weights) loaded via `vld1q_u16_x4_ex`:
+Measured on a real port (intel/soft-crc TCP/IP one's-complement checksum, Windows
+ARM64 clang): the native path cut the kernel from **0.17 → 0.07 cycles/byte, ~56%**,
+bit-exact with the scalar reference across sizes 1..300.
+
+**Profiler signature (how §8.5 surfaces this):** the kernel is a top self-time leaf
+even though the module already contains NEON; the hot frames trace to the generic
+shim's `vqtbl1q`/`vbic`/`vpaddq` rather than to a dedicated `vrev*`/`vpadal*`.
+
+**Validation**
+- A byteswap-then-accumulate / checksum kernel uses `vrev16q_u8`/`vrev32q_u8` +
+  `vpadalq_u16`/`vpadalq_u8`, not `vqtbl1q_u8`-based shuffle emulation.
+- No `_mm_hadd_*`-equivalent reduction inside the hot loop; a single `vaddvq_*`
+  after the loop (see §6).
+- The generic SSE→NEON shim remains only as the correctness fallback / for
+  intrinsics without a dedicated NEON op — hot kernels get a native path.
+
+---
+
+## Generalizing Project-Wrapper Idioms to Portable NEON
+
+Real codebases often wrap NEON in project-local macros (alignment-hint loads,
+capability-dispatch macros, weight tables). Those macro *names* are not portable —
+using them outside their project is an undefined-symbol build error. But each is
+an instance of a **general, portable pattern**. When porting, translate to the
+portable form below; keep the project's own macro only inside that project. The
+zlib-ng spellings (`_ex`, `ALIGN_DIFF`, `OPTIMAL_CMP`, `tap_table`) are cited as
+concrete examples, not as APIs to reuse.
+
+### 10. Aligned Wide Load/Store After an Alignment Preamble
+
+A hot streaming loop should use wide struct loads/stores (`vld1q_*_x4` /
+`vst1q_*_x4`, 64 B/iter — §1) *after* the pointer has been aligned (§4). Some
+projects express the "the pointer is aligned to N" fact with an alignment-hint
+wrapper (e.g. zlib-ng's `vld1q_u8_x4_ex(buf, 256)`, hint in **bits**, so
+256 = 32 B). The portable equivalent is the plain struct intrinsic — the hint
+only helps on cores that honour it and only after §4 has *made* the pointer
+aligned:
 
 ```c
-uint16x8x4_t taps = vld1q_u16_x4_ex(tap_table, 256);
-acc   = vmlal_high_u16(acc,   taps.val[0], s2_0);
+// Portable: standard wide struct load (use after the §4 alignment preamble)
+uint8x16x4_t d0_d3 = vld1q_u8_x4(buf);
+vst1q_u8_x4(dst, d0_d3);
+
+// Project-local ALTERNATIVE (zlib-ng): an alignment-hint wrapper — same effect,
+// non-portable name. Only valid when buf is actually 32-byte aligned:
+//   uint8x16x4_t d0_d3 = vld1q_u8_x4_ex(buf, 256);
+```
+
+**Validation**
+- Hot loop uses `vld1q_*_x4` / `vst1q_*_x4` (or a project wrapper over them), and
+  a §4 preamble has aligned the pointer before any aligned/hinted access.
+- No `*_ex`-style alignment-hint wrapper appears outside the project that defines
+  it; ports use the plain `vld1q_*_x4` form (or explicit alignment).
+
+### 11. Alignment Preamble + Capability-Dispatched Copy/No-Copy
+
+Two portable techniques often hide behind project macros:
+
+1. **Alignment preamble** — compute the bytes to the next N-byte boundary with
+   plain pointer math and scalar-process them first (this is §4). Projects may
+   wrap the count in a macro (e.g. zlib-ng `ALIGN_DIFF(src, 32)`); the portable
+   form is explicit:
+
+   ```c
+   size_t align_diff = (size_t)((-(uintptr_t)src) & (32 - 1));   // portable
+   if (align_diff > len) align_diff = len;
+   if (align_diff) { scalar_process(src, align_diff); src += align_diff; len -= align_diff; }
+   ```
+
+2. **Capability dispatch** — pick a code path by a runtime/compile-time hardware
+   capability. Projects may gate on an internal macro (e.g. zlib-ng
+   `#if OPTIMAL_CMP >= 32`); the portable form is a documented feature check
+   (`IsProcessorFeaturePresent` on Windows, `getauxval`/`__ARM_FEATURE_*` on
+   Linux), with **both** branches preserved:
+
+   ```c
+   if (have_wide_path) return impl_copy(state, dst, src, len);   // copy variant
+   else { uint32_t r = impl_no_copy(state, src, len); memcpy(dst, src, len); return r; }
+   ```
+
+**Validation**
+- Alignment preamble uses `(-(uintptr_t)src) & (align-1)` (or a project macro
+  over exactly that), and `len` is clamped before the SIMD loop.
+- Capability dispatch keeps both the wide and fallback branches; the gate is a
+  documented feature check, not an undefined project macro, in a portable port.
+
+### 12. Deferred Multiply with a Preloaded Coefficient/Weight Table
+
+The deferred-multiply pattern (§2) generalizes to *any* fixed weight/coefficient
+table: load the table **once** outside the loop, accumulate raw sums in-loop with
+cheap widening adds, then apply the weights after the loop with `vmlal_u16` /
+`vmlal_high_u16`. Projects may name the table (e.g. zlib-ng adler32's
+`tap_table`); the pattern and the intrinsics are portable — only the table's
+*contents* are workload-specific:
+
+```c
+uint16x8x4_t taps = vld1q_u16_x4(weight_table);            // load once (portable)
+// ... in loop: widening adds into s2_* accumulators (§2) ...
+acc   = vmlal_high_u16(acc,   taps.val[0], s2_0);          // apply weights after loop
 acc_0 = vmlal_u16     (acc_0, vget_low_u16(taps.val[0]), vget_low_u16(s2_0));
 ```
 
-The principle (defer multiply) is general; the `tap_table` structure and `_ex` load are zlib-ng specific.
+**Validation**
+- The weight/coefficient table is loaded once before the loop (`vld1q_*` /
+  `vld1q_*_x4`), not rebuilt per iteration.
+- Weights are applied with a single post-loop `vmlal`/`vmlal_high` pass (§2); the
+  table's layout is treated as workload-specific data, not a portable API.
+
+### 13. Reciprocal / Reciprocal-Sqrt: Estimate+NR vs Full-Precision — Decide by Bottleneck
+
+`_mm_rcp_ps` / `_mm_rsqrt_ps` (12-bit estimates) have NEON estimate ops
+(`vrecpeq_f32` / `vrsqrteq_f32`) with fused NR helpers (`vrecpsq_f32` /
+`vrsqrtsq_f32`, each computing the NR multiplier in one op). The instinct to
+*always* reach for the estimate+Newton-Raphson path on NEON is **wrong**; whether
+it wins depends on whether the reciprocal/rsqrt is the loop's bottleneck. NEON
+also has full-precision `vdivq_f32` and `vsqrtq_f32` — these are single
+instructions but high-latency and poorly pipelined.
+
+**The rule (two measured datapoints, opposite regimes):**
+
+| Regime | Faster choice | Why |
+|---|---|---|
+| Reciprocal/rsqrt is **NOT** the bottleneck (surrounded by other FP work that hides its latency) | **Full-precision** `vdivq_f32` / `vsqrtq_f32`+`vdivq_f32` | One high-latency op overlaps with neighboring work; the 4-op estimate+NR chain just adds µops. Also full precision, no accuracy loss. |
+| Reciprocal/rsqrt **IS** the bottleneck (dominates the loop; back-to-back, little else to overlap) | **Estimate+NR** `vrsqrteq_f32`+`vrsqrtsq_f32` / `vrecpeq_f32`+`vrecpsq_f32` | The estimate+NR ops (~3-4 cyc, well pipelined) out-*throughput* one non-pipelined `vsqrtq`/`vdivq` (~10+ cyc) when this op is what the loop is waiting on. |
+
+**Measured evidence (Windows ARM64, clang-cl, native):**
+- *Divide NOT the bottleneck* — romeric/fastapprox `vfastlog2` (one divide amid
+  bit-twiddling): faithful `vdivq_f32` **~1.3× FASTER** than `vrecpeq_f32`+2 NR,
+  and full precision.
+- *Rsqrt IS the bottleneck* — CUDA-Handbook N-body force kernel (one
+  reciprocal-sqrt per interaction, back-to-back over N² pairs): `vrsqrteq_f32`+1 NR
+  **~11% FASTER** than `vdivq_f32(1, vsqrtq_f32(x))` (3.18 s vs 3.57 s,
+  back-to-back alternating wall-clock; both profiled at 99.5-99.7% self-time in
+  the inlined kernel, no libm `sqrtf`, no dispatch fallback).
+
+**Profiler signature (how §8.5 surfaces this):** the reciprocal/rsqrt kernel is a
+top self-time leaf doing genuine vector FP work (no libm `sqrtf`/`__divsf3` call,
+no scalar fallback). To *decide the strategy*, compare the two builds
+back-to-back and alternating (system load drifts between separately-collected ETLs
+— do not compare CPU-ms from ETLs minutes apart; use paired wall-clock, use the
+profiler only to confirm the leaf is genuine kernel work).
+
+**Validation**
+- The chosen path matches the regime: estimate+NR only where the reciprocal/rsqrt
+  is the measured bottleneck; full-precision `vdivq`/`vsqrtq` otherwise.
+- NR step count matches the source's precision target (SSE `rcp_sqrt_nr_ps` = 1 NR
+  ≈ 24-bit; do not silently drop or add NR steps).
+- The A-vs-B decision is backed by a paired back-to-back measurement, not a single
+  ETL magnitude.

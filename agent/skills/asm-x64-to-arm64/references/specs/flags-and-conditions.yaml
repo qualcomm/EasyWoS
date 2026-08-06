@@ -169,6 +169,33 @@ specs:
       - All cmov<cc> translate to csel (or cset for set-to-bool patterns)
       - cmov from memory is rewritten as ldr + csel
 
+  - id: 7
+    name: stale-nzcv-before-csel
+    category: control-flow
+    description: >
+      csel/cset/csinc/b.<cc> consume the NZCV set by the MOST RECENT S-suffix
+      instruction, cmp, or tst — flags are not re-derived per condition. After an
+      intervening cset/branch/unrelated cmp, the flags still reflect the PRIOR
+      comparison, so a csel placed long after its governing cmp (with another cmp
+      between) selects on the wrong comparison and compiles cleanly. Re-establish
+      flags with a fresh cmp/tst immediately before each csel/cset/conditional
+      branch whose condition is not the one most recently set.
+    metadata:
+      match_rules:
+        - pattern: "\\bcsel\\b|\\bcset\\b|\\bcsinc\\b|\\bcsinv\\b|\\bcsneg\\b"
+          type: regex
+          scope: instruction
+          description: conditional-select/set — verify NZCV was set for THIS condition immediately prior
+    x64_constructs:
+      - "// x64 cmov reads EFLAGS the same way, but cmov usually sits right after its cmp; ported code drifts the cmp away from the select"
+    arm64_constructs:
+      - "cmp w2, #0; csel x6, x13, x12, ne   ; flags freshly set for THIS condition"
+    pitfalls:
+      - A cset wX,cc followed later by a csel ...,cc2 does NOT reset flags for cc2; the second still reads the original cmp
+      - Symptom is data-dependent (e.g. a reference-pointer select picks the wrong side for one mode family), surfacing only on inputs where the two conditions disagree
+    validation_criteria:
+      - Every csel/cset/b.<cc> is preceded by a flag-setting instruction whose comparison matches the condition tested — no cmp relied on across intervening non-flag work or a different cmp
+
   - id: 6
     name: csdb-speculation-barrier
     category: speculation

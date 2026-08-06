@@ -254,3 +254,41 @@ specs:
       - No push/pop mnemonics remain in arm64 output
       - Prologue saves use pre-indexed stp [sp, #-N]!; epilogue uses post-indexed ldp [sp], #N
       - All such adjustments are multiples of 16
+
+  - id: 10
+    name: stride-units-elements-vs-bytes
+    category: contract
+    description: >
+      A strided 2-D kernel advances each pointer by a stride whose UNIT (elements
+      vs bytes) depends on the pointer's element type. For 1-byte elements
+      (char/uint8) element-stride == byte-stride and the naive port works; for a
+      wider element (int16, int32, ...) the kernel MUST scale the stride to bytes
+      (lsl xN, xN, #log2(sizeof element)) before using it as a pointer increment.
+      This bites kernels with pointers of DIFFERENT element widths on each side
+      (a widening/narrowing copy or filter): the wider-typed pointer's stride
+      needs scaling, the 1-byte side does not. It is SILENT because same-width
+      variants coincidentally have matching element/byte handling, so the bug
+      only surfaces on the differently-typed side. Derive each pointer's stride
+      unit from the destination declaration's element type — not from the x64
+      source's stride handling.
+    metadata:
+      match_rules:
+        - pattern: "\\badd\\s+x\\d+\\s*,\\s*x\\d+\\s*,\\s*x\\d+\\b"
+          type: regex
+          scope: instruction
+          description: pointer advanced by a stride register — verify the stride is in bytes for this pointer's element type
+        - pattern: "int16|int32|short|\\bword\\b"
+          type: regex
+          scope: instruction
+          description: a wider-than-1-byte element type — check whether its stride arrives in elements and needs scaling to bytes
+    x64_constructs:
+      - "add r1, r1            ; x64 scaled a 2-byte stride — but its presence/absence is NOT authoritative for the contract"
+    arm64_constructs:
+      - "lsl x3, x3, #1        ; 2-byte-element dstStride: elements -> bytes, once up front"
+      - "// 1-byte-element side stride needs NO scaling"
+    pitfalls:
+      - The x64 source's `add r1,r1` (or its absence) and porting comments claiming 'caller passes a byte stride' are a classic source of this bug — trust the destination prototype's pointer type
+      - Same-width strides matching bytes is a coincidence of equal element size, not a guarantee — re-check every variant whose pointers differ in width
+    validation_criteria:
+      - Every pointer whose element type is >1 byte has its element-stride scaled to a byte-stride (lsl #log2(sizeof element)) before use as an increment
+      - Stride-unit handling is derived from the destination declaration's pointer types, and numeric output is diffed against the reference (failure-tested)

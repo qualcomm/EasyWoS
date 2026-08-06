@@ -113,13 +113,16 @@ specs:
       - "add v0.2d, v0.2d, v1.2d"
       - "mul v0.8h, v0.8h, v1.8h"
       - "smull v2.4s, v0.4h, v1.4h; smlal2 v2.4s, v0.8h, v1.8h"
+      - "mul v24.4s, v20.4s, v8.s[0]    ; by-element: element reg v8 must be in low bank"
       - "umin v0.16b, v0.16b, v1.16b"
     pitfalls:
       - Lane suffix must match operation width; mismatching changes the operation entirely
       - pmaddwd has no single-instruction NEON form
+      - "By-element mul/mla/smull/smlal/sqdmulh ...,Vm.<T>[idx] restricts the element register Vm by lane width: .h[] (16-bit) requires Vm in v0-v15; using v16-v31 fails to assemble ('invalid operand for instruction'). Load coefficient/basis tables into the low bank (v0-v15), and save d8-d15 if v8-v15 are used (callee-saved). Common when porting x86 coefficient-driven kernels (DCT/DST basis, FIR taps) where the source used any xmm for constants."
     validation_criteria:
       - All padd*/psub*/pmul* translate with correct lane suffix
       - pmaddwd-class operations use multi-instruction sequences
+      - "By-element *.h[idx] multiplies source their element register from v0-v15; d8-d15 saved if v8-v15 used"
 
   - id: 4
     name: simd-bitwise-with-pandn-swap
@@ -317,3 +320,66 @@ specs:
       - Forgetting "=w" and using "=r" allocates a GP register; NEON instruction fails to assemble
     validation_criteria:
       - All inline-asm NEON outputs use "=w" constraint
+
+  - id: 10
+    name: neon-computational-correctness-pitfalls
+    category: simd
+    description: >
+      Semantic NEON traps that compile and run but produce wrong numbers, caught
+      only by diffing against the reference on EXTREME/boundary inputs. (1)
+      Partial loads (ld1 {v.s}[0], ldr s/b) leave the rest of the V register
+      stale; a later full-width op folds garbage — pre-zero with movi v.8b,#0.
+      (2) Self-ext (ext vD,vS,vS,#N single-register) is cyclic within the
+      register; a narrow self-ext tap window wraps once out_cols+taps-1 >
+      reg_lanes — load the full window and ext across two registers. (3)
+      Pre-combined butterfly/fold sums (E=a+b, EE/EO) overflow a .8h lane once a
+      pass consumes another pass's up-scaled coefficients (a value near the int16
+      bound, doubled by the combine, exceeds int16 and wraps); widen to 32-bit
+      with saddl/ssubl + .4s mul/mla where the reference uses int32. (4) Narrowing
+      form must match the reference's overflow semantics: sqxtn/sqxtun SATURATE,
+      while a C (int16_t) cast WRAPS (use xtn + mask / low-half store); rounding
+      (sqrshrn/srshr round vs add+sshr floor) must likewise match. (5) A
+      multi-pass separable transform (DCT/IDCT/DST) that rounds between passes
+      must mirror the reference's exact pass/transpose ORDER and per-pass shift —
+      columns-first vs rows-first, or an omitted/added transpose, changes which
+      intermediates get rounded and diverges by ±1 (a failure under a bit-exact
+      contract). Symptoms: 'output is the transpose' (first/DC output right, most
+      others wrong, large maxdiff); 'inter-pass mismatch' (small fraction off-by-1,
+      symmetric); 'over/under-shift by a power of two' (wrong pass shift — copy it
+      from the reference for the target data width, not the port comment).
+    metadata:
+      match_rules:
+        - pattern: "ld1\\s*\\{\\s*v\\d+\\.(s|h)\\s*\\}\\[0\\]|\\bldr\\s+(s|b|h)\\d+"
+          type: regex
+          scope: instruction
+          description: partial/narrow load — verify the unloaded lanes are zeroed before a full-width read
+        - pattern: "\\bext\\s+v(\\d+)\\.\\w+\\s*,\\s*v\\1\\.\\w+\\s*,\\s*v\\1\\."
+          type: regex
+          scope: instruction
+          description: self-ext (same src register twice) — cyclic; verify tap reach stays within loaded lanes
+        - pattern: "\\b(add|sub|saddl2?|ssubl2?)\\s+v\\d+\\.8h"
+          type: regex
+          scope: instruction
+          description: 16-bit butterfly/fold combine — verify it cannot exceed int16 once fed up-scaled coefficients
+        - pattern: "\\b(sqxtn2?|sqxtun2?|uqxtn2?|sqrshrn2?|srshr)\\b"
+          type: regex
+          scope: instruction
+          description: saturating/rounding narrow — verify it matches the reference's wrap-vs-saturate and rounding
+    x64_constructs:
+      - "// these are NEON-side semantic traps with no x64 counterpart; the x64 source was correct"
+    arm64_constructs:
+      - "movi v0.8b,#0; ld1 {v0.s}[0],[x0]        ; zero stale lanes before partial load"
+      - "ld1 {v17.16b},[x0]; ext v19.16b,v17.16b,v18.16b,#N   ; ext across two regs, no wrap"
+      - "saddl v2.4s,v0.4h,v1.4h; saddl2 v3.4s,v0.8h,v1.8h    ; widen butterfly E/O to 32-bit"
+      - "saddl v20.4s,v0.4h,v3.4h; mul v24.4s,v20.4s,v8.s[0]  ; dct4 pass2: 32-bit butterfly + 32-bit by-element basis (real port fix)"
+    pitfalls:
+      - All these bugs are invisible on mid-range random data and only fire on boundary/extreme inputs (all-min, all-max, alternating ±max) — a harness without boundary vectors gives a false green
+      - A comment asserting 'upper lanes are 0' is not a guarantee — verify something actually zeroed them
+      - Self-ext wrap is width-dependent: narrow widths whose last column stays in range pass, so the bug first appears at the width that just exceeds the loaded window
+      - The widen rule is a correctness FLOOR, not "always widen": widening earlier than the magnitude bound requires halves throughput (.8h does 2x the lanes of .4s). For an 8-bit metric (SAD/SATD/SSD-of-bytes), keep the inner accumulation in .8h and widen to .4s only at the cross-block reduction; an unsigned-8-bit sum in .8h is safe up to ~257 addends/lane. Decide width by max_addend × addends_per_lane in BOTH directions.
+      - "Multi-pass transforms: the overflow trigger is a LATER pass consuming an EARLIER pass's up-scaled output. dct4 pass 1 butterflies 8-bit residuals (fit .4h) but pass 2 butterflies pass-1 coefficients (~32640), so c0+c3 wraps .4h. Size the butterfly lane for the latest pass's magnitude, not the input's — simplest correct choice is 32-bit (saddl/ssubl + .4s mul/mla) for ALL passes. Note this forces a 32-bit basis, which then makes the by-element element-register restriction .s[]→v0-v31 (not the tighter .h[]→v0-v15) — see simd-integer-arithmetic."
+    validation_criteria:
+      - Every partial/narrow load into a register a later full-width op reads is preceded by zeroing the unloaded lanes (or uses a zero-extending load)
+      - No single-register self-ext builds a tap window whose widest column reads past the loaded lanes; wide-window cases ext across two registers
+      - Pre-combined butterfly/fold intermediates are held in a lane width fitting input_max × combine_factor; widened to 32-bit where the reference uses int32, but NOT earlier than that bound requires (8-bit metrics stay .8h through the inner loop, widening to .4s only at the cross-block reduction)
+      - The narrowing instruction's overflow behaviour (saturate vs wrap) and rounding direction match the reference, verified on extreme inputs

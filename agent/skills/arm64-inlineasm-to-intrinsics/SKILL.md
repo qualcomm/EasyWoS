@@ -116,6 +116,47 @@ Avoid:
 - Keeping cryptic register-shaped variable names purely to mirror the asm
 - Writing code that is hard to maintain just to resemble assembly
 - Dropping remainder paths, edge cases, or pointer updates
+- **Narrowing the algorithm's PARALLELISM WIDTH.** This rule frees you from the
+  asm's *textual form*; it does not license processing less data per iteration.
+  If the asm runs N independent items at a time (N blocks, N rows, N lanes of a
+  transposed layout), the port must too.
+
+#### Parallelism width is semantics for performance, not appearance
+
+"Do not transliterate the asm" and "process one item at a time" are **different
+decisions**, and conflating them produces code that is correct yet slower than the
+scalar fallback it replaced.
+
+Read the asm for its *width* before writing anything:
+
+| Signal in the asm | What it means |
+|---|---|
+| `trn1`/`trn2`/`zip1`/`zip2`/`tbl` around the round body | state is TRANSPOSED across lanes: lane *i* belongs to item *i* |
+| the same round applied to 12-16+ vector registers | several items in flight simultaneously |
+| a tail loop handling 1..N-1 items after the main loop | the main loop is N-wide |
+| ~100s of lines for an algorithm whose round is ~10 lines | unrolling over N items, not exotic instructions |
+
+Then express that width **in intrinsics** — a wide port is usually SHORT, because
+the width comes from holding N items in vectors, not from repeating code. Keep the
+narrow single-item path only as the tail.
+
+**Worked example (a real regression, ChaCha20 under MSVC ARM64).** The asm was
+~900 lines doing 4 blocks at once with the words transposed across lanes. The
+first port treated that as "assembly appearance" and did ONE block per iteration.
+It passed every correctness test — published KAT, independent oracle,
+asm-vs-intrinsics, ragged streaming — and was **1.22x SLOWER than wolfSSL's
+portable C** (measured in-server: 299 ms vs 245 ms). One block at a time is a long
+dependency chain of ~16 NEON ops with nothing to interleave, while the compiler
+schedules the scalar C well. Rewriting to 4-block-parallel — about 50 lines of
+intrinsics, no transliteration — gave **1.96x FASTER than the C** (125 ms) and
+also removed the lane-rotation shuffles the single-block form needs. Same tests,
+same harness; only the width changed.
+
+**Consequence for the workflow:** a narrow port cannot be caught by any
+correctness check, because it is correct. It is only visible by profiling the
+kernel against the REAL fallback (see the orchestrator's Verification &
+Measurement Discipline). Treat "my port is slower than portable C" as a signal to
+widen the parallelism, never as a reason to revert the port.
 
 ### Common mappings
 

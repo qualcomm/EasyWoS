@@ -264,3 +264,40 @@ specs:
     validation_criteria:
       - All non-leaf functions save and restore x30 in prologue/epilogue
       - ret is the last instruction of every function (no fall-through)
+
+  - id: 10
+    name: w-register-write-clobbers-x-register
+    category: abi
+    description: >
+      Writing a 32-bit wN register zero-extends into the full 64-bit xN (bits
+      63:32 cleared) — wN and xN are the same physical register. Any 32-bit op
+      (ldrb wN / add wN / mov wN / lsl wN) silently destroys a 64-bit pointer or
+      value in the same register. Two recurring forms: (1) in-function aliasing,
+      where a wN load clobbers a live xN pointer; (2) a bl-reached helper that
+      returns in / scratches a wN whose xN the caller keeps live across the call
+      (a pointer advanced between calls), so the crash PC is at the next
+      load/store, far from the bug. The d/s-form SIMD analogue: a .2s/.4h/.8b/
+      d-form write zeroes the upper 64 bits of the V register.
+    metadata:
+      match_rules:
+        - pattern: "(ldr[bh]?|add|sub|mov|lsl|lsr|orr|and)\\s+w\\d+"
+          type: regex
+          scope: instruction
+          description: 32-bit write to wN — check whether the same xN holds a live pointer/value
+        - pattern: "\\bbl\\s+\\w+"
+          type: regex
+          scope: instruction
+          description: helper call — check its return/scratch register vs caller's live pointers
+    x64_constructs:
+      - "// x64 32-bit writes (mov eax,...) also zero rax's upper bits, but x64 asm rarely reuses one reg as both a live pointer and a 32-bit scratch the way ported NEON kernels do"
+    arm64_constructs:
+      - "ldrb w9, [x2]; add x10, x2, #1; dup v5.8h, w9   ; build addr in a DIFFERENT reg"
+      - "// helper returns sum in x11 (a clobber reg), leaving x0/x2 pointers intact across bl"
+    pitfalls:
+      - A doc-comment claiming 'returns in w0, preserves x0..x3' is self-contradictory — w0 IS x0
+      - Emulators and single-iteration/small-size paths mask it (the worker returns before reusing the clobbered reg) — only looped/larger sizes crash; exercise the multi-call path
+      - Symmetric for SIMD — a .2s/.4h/.8b/d-form write zeroes the V register's upper 64 bits; don't reuse a .4s accumulator for an 8-wide-tail d-form write
+    validation_criteria:
+      - No bl-reached helper returns in or scratches a register whose x-form the caller keeps live (pointer advanced across calls) — results go to a dedicated clobber GPR
+      - Within a function, no register is written with a w-form while its x-form must still hold a live 64-bit pointer/value
+      - Narrow (.2s/.4h/.8b/d-form) vector writes do not silently clear an accumulator's upper lanes a later full-width op reads

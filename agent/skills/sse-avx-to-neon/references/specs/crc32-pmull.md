@@ -97,8 +97,8 @@ floor that the hybrid builds on.
 
 ```c
 #ifdef __ARM_FEATURE_PMULL   // standard compiler define for PMULL support
-#include <arm_neon.h>
-#include <arm_acle.h>        // vmull_p64, vmull_high_p64, poly64_t, poly128_t
+#include <arm_neon.h>        // vmull_p64, vmull_high_p64, poly64_t, poly128_t
+#include <arm_acle.h>        // __crc32b/h/w/d (only needed for the hardware-CRC hybrid)
 ```
 
 Some build systems define their own capability macro (e.g., `ARM_PMULL` in zlib-ng).

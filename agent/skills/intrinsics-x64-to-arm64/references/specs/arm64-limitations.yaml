@@ -364,3 +364,51 @@ specs:
     validation_criteria:
       - No direct *(uint32_t*) dereference of potentially unaligned pointers in ARM64 tail code
       - 4-byte tail operations use vld1_lane_u32 / vst1_lane_u32
+
+  - id: 11
+    name: no-string-compare-substitute-algorithm
+    category: no-equivalent
+    description: >
+      SSE4.2 string-compare instructions _mm_cmpestrm/_mm_cmpestri/_mm_cmpistrm/
+      _mm_cmpistri (PCMPESTRM/PCMPESTRI/PCMPISTRM/PCMPISTRI) have NO NEON
+      equivalent (not baseline, not SVE2). In EQUAL_ORDERED mode one instruction
+      does an ordered substring compare of a needle vs a 16-byte window and
+      returns a candidate bitmask. Faithfully emulating it (k shifted vceqq_u8 +
+      movemask AND-reduce per window) is CORRECT but costs O(k) NEON ops per
+      16-byte window to replace one x86 instruction. FIX: port the PROBLEM with a
+      SIMD-friendly algorithm, not the instruction. For substring search use the
+      Mula first-and-last-byte filter (broadcast needle[0] and needle[k-1],
+      vceqq_u8 both against the window, vandq_u8 the masks, movemask, memcmp only
+      the rare survivors) — O(1) vector ops per window. MEASURED
+      (WojciechMula/sse4-strstr, Windows ARM64 clang-cl, k=16, 700K searches, both
+      verified 50K/0 vs scalar oracle and doing identical work / 186114 matches):
+      faithful cmpestrm emulation 1.98s vs first/last-byte 1.00s = ~2x slower;
+      both ~99% self-time in the inlined kernel (no fallback). Contrast a
+      genuinely irreducible limit (large-table gather, spec 7) where the
+      emulated/scalar path IS the floor; for PCMPxSTRx a better algorithm exists,
+      so emulation is a real perf defect.
+    metadata:
+      match_rules:
+        - pattern: "_mm_cmpestr|_mm_cmpistr"
+          type: regex
+          scope: intrinsic_call
+          description: SSE4.2 explicit/implicit-length string-compare (PCMPESTRx/PCMPISTRx)
+        - pattern: "_SIDD_CMP_EQUAL_ORDERED|_SIDD_CMP_EQUAL_ANY|_SIDD_CMP_RANGES"
+          type: regex
+          scope: expression
+          description: SSE4.2 string-compare mode flags — the routine is a string/substring search to re-express algorithmically
+    x64_constructs:
+      - "_mm_cmpestrm(N, k, D, len, _SIDD_UBYTE_OPS|_SIDD_CMP_EQUAL_ORDERED|_SIDD_BIT_MASK)"
+      - "substring search / strstr built on PCMPESTRM candidate bitmask"
+    arm64_constructs:
+      - "first=vdupq_n_u8(needle[0]); last=vdupq_n_u8(needle[k-1]);"
+      - "mask = movemask(vandq_u8(vceqq_u8(vld1q_u8(s+i),first), vceqq_u8(vld1q_u8(s+i+k-1),last)));"
+      - "while(mask){b=ctz(mask); if(!memcmp(s+i+b,needle,k)) return i+b; mask&=mask-1;} + scalar tail"
+    pitfalls:
+      - Faithful per-window cmpestrm emulation is O(k) NEON ops/window — CORRECT but ~2x slower than the algorithmic substitute (measured)
+      - This passes every correctness test — only a profiler + an A/B vs the algorithm reveals it
+      - Verify the substitute does IDENTICAL work (same match count) so the speedup is real, not a shrunk workload
+    validation_criteria:
+      - No _mm_cmpestr*/_mm_cmpistr* faithfully emulated per-window in a hot ARM64 substring/search path
+      - Substring search uses a first/last-byte (or equivalent) SIMD filter + memcmp confirm, verified vs a scalar oracle
+      - A/B vs the emulation confirms the algorithmic path does identical work and is faster

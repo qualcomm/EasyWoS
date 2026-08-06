@@ -16,7 +16,13 @@ const OUTPUT_PATH = path.resolve(SKILLS_DIR, "combined-spec-summary.yaml");
 // ---------------------------------------------------------------------------
 
 function parseSpecYaml(filePath) {
-  const content = fs.readFileSync(filePath, "utf8");
+  // Normalize CRLF -> LF on read. Source spec .yaml files checked out on Windows
+  // may have CRLF; without this, split("\n") leaves a trailing "\r" on every
+  // line that gets concatenated into folded descriptions as a mid-line CR,
+  // producing a combined-spec-summary.yaml that js-yaml rejects
+  // ("bad indentation of a mapping entry"). See parseSpecYaml callers + the
+  // downstream spec_matcher.js which loads the output with js-yaml.
+  const content = fs.readFileSync(filePath, "utf8").replace(/\r\n?/g, "\n");
   const specs = [];
   let current = null;
   let inMetadata = false;

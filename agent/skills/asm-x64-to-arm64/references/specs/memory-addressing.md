@@ -209,6 +209,61 @@ one `ldp`/`stp`.
 - Prologue saves use pre-indexed `stp [sp, #-N]!`; epilogue restores use post-indexed `ldp [sp], #N`.
 - All such adjustments are multiples of 16.
 
+## Stride Units: Elements vs Bytes (silent wrong-output trap)
+
+**Not a mnemonic mapping — a contract trap.** A strided 2-D kernel advances each
+pointer by a `stride`. Whether that stride arrives **in elements or in bytes**
+depends on the pointer's element type, and the asm must scale accordingly. For a
+1-byte element (`char`/`uint8`) element-stride == byte-stride and the naive port
+"just works"; for a wider element (`int16`, `int32`, …) the kernel **must scale
+the stride to bytes** (`lsl xN, xN, #log2(sizeof element)`) before using it as a
+pointer increment.
+
+This bites kernels with pointers of **different element widths on each side** —
+a widening/narrowing copy or filter where input and output (or src and dst) are
+not the same type. The wider-typed pointer's stride needs scaling; the 1-byte
+side does not. It is silent because the same-width variants (both sides 1 byte,
+or both the same wide type used consistently) happen to have matching
+element/byte handling, so the bug only surfaces on the differently-typed side.
+
+```gas
+// A kernel whose dst is a 2-byte element, dstStride passed in ELEMENTS:
+// WRONG — advances dst by element count, overlapping every other row
+//   (the x64 source may hide this: it did `add r1, r1` and a comment claimed bytes)
+str     q0, [x2]
+add     x2, x2, x3          // x3 = element stride — too small by 2× for int16 dst
+
+// CORRECT — convert the wide-typed side's stride to bytes once, up front
+lsl     x3, x3, #1          // elements → bytes (2-byte element)
+...
+str     q0, [x2]
+add     x2, x2, x3
+```
+
+Scale exactly the wide-typed pointer(s) — a `src` whose element type is wider
+than the other side needs its `srcStride` scaled too; the 1-byte side never does.
+(Codebases that name input/output type pairs with a suffix convention — e.g. a
+narrow↔wide / 8-bit↔16-bit family — must scale the wide-typed side.)
+
+**Procedure**: for each pointer, read its element type from the destination
+declaration and derive whether its stride argument is in elements or bytes. Scale
+exactly the wide-typed side(s); do not blindly copy the x64 source's stride
+handling (it encodes its own private convention — see the contract rule in
+[[register-and-abi]]).
+
+**Pitfalls**:
+- The x64 source's `add r1, r1` (or absence of it) is **not** authoritative — a
+  port comment claiming "the caller passes a byte stride" is a classic source of
+  this bug. Trust the destination prototype's pointer type.
+- Same-width strides matching bytes is a coincidence of equal element size, not a
+  general guarantee — re-check every variant whose pointers differ in width.
+
+**Validation**:
+- Every pointer whose element type is >1 byte has its element-stride scaled to a
+  byte-stride (`lsl #log2(sizeof element)`) before use as an increment.
+- Stride-unit handling is derived from the destination declaration's pointer
+  types, and numeric output is diffed against the reference (failure-tested).
+
 ## See Also
 
 - [[register-and-abi]] for SP alignment rule and red-zone discussion.

@@ -2,6 +2,21 @@
 
 This document describes the actual process of enabling Windows ARM64 support for ActiveMQ-CPP, a complex C++ messaging library with external dependencies.
 
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Initial State](#initial-state)
+- [Step 1: Add ARM64 Configurations](#step-1-add-arm64-configurations)
+- [Step 2: First Build Attempt - FAILED ❌](#step-2-first-build-attempt---failed-)
+- [Step 3: Build APR for ARM64](#step-3-build-apr-for-arm64)
+- [Step 4: Fix Dependency Paths](#step-4-fix-dependency-paths)
+- [Step 5: Second Build Attempt - SUCCESS ✅](#step-5-second-build-attempt---success-)
+- [Key Learnings](#key-learnings)
+- [Final Configuration](#final-configuration)
+- [Recommendations for the Skill](#recommendations-for-the-skill)
+- [Timeline](#timeline)
+- [Conclusion](#conclusion)
+
 ## Project Overview
 
 - **Project:** Apache ActiveMQ-CPP 3.9.0

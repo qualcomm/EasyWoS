@@ -11,9 +11,10 @@ with concrete workarounds derived from the Microsoft STL implementation.
 5. [No `_Zeroupper` Equivalent](#no-_zeroupper-equivalent)
 6. [No `__isa_enabled` Mechanism](#no-__isa_enabled-mechanism)
 7. [No Gather/Scatter Instructions (Baseline)](#no-gatherscatter-instructions-baseline)
-8. [Variable-Count Shifts](#variable-count-shifts)
-9. [Cross-128-bit-Lane Operations](#cross-128-bit-lane-operations)
-10. [The 4-byte Tail UB Trap](#the-4-byte-tail-ub-trap)
+8. [No String-Compare Instructions (`PCMPxSTRx` family)](#no-string-compare-instructions-pcmpxstrx-family--substitute-the-algorithm-dont-emulate-the-instruction)
+9. [Variable-Count Shifts](#variable-count-shifts)
+10. [Cross-128-bit-Lane Operations](#cross-128-bit-lane-operations)
+11. [The 4-byte Tail UB Trap](#the-4-byte-tail-ub-trap)
 
 ---
 
@@ -198,6 +199,74 @@ _V = vsetq_lane_u32(ptr[idx[2]], _V, 2);
 _V = vsetq_lane_u32(ptr[idx[3]], _V, 3);
 ```
 Or use SVE gather loads if `_Use_FEAT_SVE2()`.
+
+---
+
+## No String-Compare Instructions (`PCMPxSTRx` family) — Substitute the ALGORITHM, don't emulate the instruction
+
+**x64**: SSE4.2 has the string-compare instructions `_mm_cmpestrm` / `_mm_cmpestri`
+/ `_mm_cmpistrm` / `_mm_cmpistri` (`PCMPESTRM`/`PCMPESTRI`/`PCMPISTRM`/`PCMPISTRI`).
+In `_SIDD_CMP_EQUAL_ORDERED` mode, a **single** instruction performs an ordered
+substring compare of a needle against a 16-byte data window and returns a bitmask
+of candidate start offsets — the core of an SSE4.2 `strstr`.
+
+**ARM64**: NEON has **no** string-compare instruction at all — not baseline, not
+SVE2. There is nothing to map the intrinsic to.
+
+**The trap — faithful per-window emulation is slow.** You *can* emulate
+`cmpestrm` EQUAL_ORDERED by comparing the window against each needle byte at the
+matching shift and AND-reducing a movemask:
+```cpp
+uint32_t mask = 0xFFFF;
+for (size_t t = 0; t < k; t++) {                 // k = needle length
+    uint8x16_t Dt = vld1q_u8(data + t);          // window shifted by t
+    uint8x16_t eq = vceqq_u8(Dt, vdupq_n_u8(needle[t]));
+    mask &= neon_movemask_u8(eq);                // movemask emulation (see above)
+    if (!mask) break;
+}
+```
+This is correct, but it costs **O(k) NEON ops per 16-byte window** (one `vld`+`vdup`+
+`vceqq`+movemask-gather per needle byte) to replace **one** x86 instruction.
+
+**The fix — use the SIMD substring ALGORITHM, not the instruction.** The standard
+(Mula) first-and-last-byte filter is O(1) vector ops per window: broadcast
+`needle[0]` and `needle[k-1]`, compare against `D[i..]` and `D[i+k-1..]`, AND the
+two masks to get candidate offsets, and run a full `memcmp` only on the (rare)
+survivors:
+```cpp
+uint8x16_t first = vdupq_n_u8(needle[0]);
+uint8x16_t last  = vdupq_n_u8(needle[k-1]);
+for (size_t i = 0; i + 16 + k <= n + 1; i += 16) {
+    uint32_t mask = neon_movemask_u8(vandq_u8(
+        vceqq_u8(vld1q_u8(s+i),       first),
+        vceqq_u8(vld1q_u8(s+i+k-1),   last)));
+    while (mask) { unsigned b = __builtin_ctz(mask);
+        if (memcmp(s+i+b, needle, k) == 0) return i+b;
+        mask &= mask - 1; }
+}
+// + scalar tail
+```
+
+**Measured — two framings, be honest about which one applies:**
+- A *naive* O(k)-per-window `cmpestrm` emulation (k shifted `vceqq_u8` + movemask
+  AND-reduce, one iteration per needle byte) vs the first/last-byte algorithm:
+  the emulation is **~2× slower** (k=16, 700K searches over 8 KiB — 1.98 s vs
+  1.00 s, both 50K/0 vs oracle, identical 186114 matches).
+- BUT a *competent* spec-driven port rarely writes the naive O(k) version: because
+  the candidate positions get a trailing `memcmp` confirm anyway, a good port
+  filters on just the **first byte** (`vceqq_u8` + movemask, O(1)/window) — which
+  is already close to the first/last-byte algorithm. A fair spec-driven A/B
+  (first-byte-filter BEFORE vs first-and-last-byte AFTER, needle mostly absent,
+  identical work) measured only **~3% apart** (≈3.49 s vs ≈3.36 s).
+
+**Rule.** When an x86 intrinsic has *no* NEON equivalent AND the surrounding
+routine solves a well-known problem (substring search, set membership, etc.),
+port the **problem** with a SIMD-friendly algorithm, not a faithful per-window
+transliteration of the instruction. The big win (~2×) is specifically over a
+*naive* O(k) emulation; against an already-reasonable first-byte filter the
+first-and-last-byte refinement is a smaller (~single-digit-%) gain that grows with
+needle length and alphabet skew. Contrast a genuinely irreducible limit (large-
+table gather, above) where the scalar/emulated path *is* the floor.
 
 ---
 

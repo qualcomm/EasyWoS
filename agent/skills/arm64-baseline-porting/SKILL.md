@@ -123,6 +123,45 @@ RET
 - Indirect call: `BLR Xn` (saves return in X30); indirect tail-call: `BR Xn`
 - Pointer authentication (PAC) may be enabled — if so, use `PACIASP`/`AUTIASP` or `RETAA`/`RETAB` per project convention
 
+## 9a. Register-Aliasing Hazards (the most common silent correctness/crash bug)
+
+`Wn` and `Xn` are the **same physical register**; a 32-bit `Wn` write
+**zero-extends** and destroys bits 63:32 of `Xn`. This single class of bug
+recurs constantly in ported NEON kernels, as a wrong result or (more often) a
+crash far from its cause:
+
+- **In-function:** never load a narrow value into `Wn` (`LDRB Wn`, `ADD Wn,...`)
+  while `Xn` still holds a live 64-bit pointer. Build addresses in a *different*
+  register. (e.g. `LDRB W9,[X2]` then `ADD X9,X2,#1` loses the byte just loaded
+  into W9 — use X10 for the pointer.)
+- **Across a `BL`:** a helper must NOT return its result in, or scratch, a
+  register whose `Xn`-form the caller keeps live across the call (a pointer it
+  advances between calls). Return results in a dedicated clobber GPR (e.g.
+  X9–X15), never X0 when X0 is a reused argument pointer. The fault PC lands at
+  the caller's *next* load/store, not at the helper.
+- A doc-comment like "returns in W0, preserves X0" is self-contradictory — W0 IS
+  X0. Trust the register algebra.
+- **SIMD analogue:** a `.2s`/`.4h`/`.8b`/`D`-form write **zeroes the upper 64
+  bits** of the V register — don't reuse a `.4s` accumulator for a `D`-form tail.
+- Small inputs / single-iteration paths mask it (the value is consumed before
+  the clobbering reuse); exercise the looped/larger-size path.
+
+## 9b. Stale Flags Before CSEL/CSET/B.cond
+
+NZCV holds the result of the **most recent** flag-setting instruction, not the
+one your condition name implies. A `CSEL ...,NE` placed after an intervening
+`CMP`/`CSET`/branch selects on the *prior* comparison and compiles cleanly.
+Re-establish flags with a fresh `CMP`/`TST` immediately before each conditional
+select/set/branch whose condition differs from the last one set.
+
+## 9c. Partial Loads Leave Stale Lanes
+
+A narrow load (`LD1 {Vn.S}[0]`, `LDR Sn`/`Bn`) writes only the addressed lanes;
+the rest of the register keeps stale contents. A later full-width op
+(`.8B`/`.16B`/`.8H`) folds that garbage into the result. Pre-zero with
+`MOVI Vn.8B,#0` before the partial load, or use a zero-extending load. A comment
+claiming "the upper lanes are 0" is not a guarantee.
+
 ---
 
 ## 10. Memory Ordering (applies to ALL output: asm AND C/intrinsics)
@@ -183,6 +222,9 @@ When the freeform output is C/C++ (not assembly):
 - [ ] All callee-saved registers used are saved in prolog and restored in epilog
 - [ ] X18 is never written or used as scratch
 - [ ] Every conditional branch has an explicit flag-setting source
+- [ ] No `CSEL`/`CSET`/`B.cond` relies on stale NZCV — flags are freshly set for *its* condition (no `CMP` carried across intervening flag-setting work)
+- [ ] No `Wn` write clobbers a live 64-bit pointer/value in `Xn`; no `BL`-reached helper returns in / scratches a register whose `Xn` the caller keeps live across the call
+- [ ] Partial/narrow loads (`LD1 {Vn.S}[0]`, `LDR Sn`) zero the unloaded lanes before any full-width op reads them; `D`-form writes don't silently clear an accumulator's upper lanes
 - [ ] B.cond ranges fit ±1 MB; long-range conditionals use a trampoline
 - [ ] Large immediates are properly split (MOVZ+MOVK)
 - [ ] No memory access below SP (no red zone)

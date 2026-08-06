@@ -43,6 +43,11 @@ tasks.md command → Dispatcher (parse + load + route) → Leaf Skill (execute m
 /dispatcher-skill <porting_item_id> --mode llm-freeform --source <matched-yaml-path>
 ```
 
+**Retry after a failed attempt (loop re-entry):**
+```
+/dispatcher-skill <porting_item_id> --specs <ids> --source <matched-yaml-path> --feedback <feedback-path>
+```
+
 ### 1.2 Parameter extraction
 
 | Parameter | Required | Description |
@@ -51,6 +56,7 @@ tasks.md command → Dispatcher (parse + load + route) → Leaf Skill (execute m
 | `--specs <ids>` | One of specs/mode | Comma-separated global spec IDs from combined collection |
 | `--mode llm-freeform` | One of specs/mode | Freeform mode (no spec matched) |
 | `--source <path>` | Yes | Path to the matched YAML file |
+| `--feedback <path>` | No | Path to a feedback file from a prior failed attempt at this item. Present only on loop re-entry (attempt ≥ 2). When present, the dispatcher loads it into `prior_attempt_feedback` (§2.7) and passes it to the leaf skill so the retry corrects the specific prior failure instead of re-emitting the same output. |
 
 ### 1.3 Validation rules
 
@@ -58,7 +64,8 @@ tasks.md command → Dispatcher (parse + load + route) → Leaf Skill (execute m
 2. `--source` MUST be present
 3. Exactly ONE of `--specs` or `--mode` MUST be present (mutually exclusive)
 4. If `--specs` is present, value must be non-empty comma-separated integers
-5. If validation fails, report error and stop
+5. `--feedback <path>` is OPTIONAL; if present, the file MUST exist and parse (see §2.7). A missing/unreadable feedback file is a hard error — do NOT silently proceed as a first attempt, because that would drop the failure signal and let the loop re-emit the same broken output.
+6. If validation fails, report error and stop
 
 ---
 
@@ -124,6 +131,9 @@ match_confidence:
   rules_hit: <count>
   scope_verified: <bool>
   llm_confidence: <level>
+
+# Present ONLY on a retry (--feedback given); omitted on the first attempt.
+prior_attempt_feedback: <see §2.7>
 ```
 
 ### 2.6 Freeform mode data contract
@@ -142,7 +152,78 @@ porting_item:
 matched_specs: []
 
 directive: Load arm64-baseline-porting skill as constraint framework
+
+# Present ONLY on a retry (--feedback given); omitted on the first attempt.
+prior_attempt_feedback: <see §2.7>
 ```
+
+---
+
+## 2.7 Prior-Attempt Feedback (loop re-entry)
+
+The dispatcher is the re-entry point of the per-item porting loop:
+
+```
+dispatch → leaf skill emits ARM64 → build + gtest → PASS ✔ (item done)
+                                                  → FAIL ✘ → write feedback file
+                                                            → re-dispatch with --feedback  ↺
+```
+
+On a first attempt there is no `--feedback`, and `prior_attempt_feedback` is
+omitted from the data contract entirely. On any retry the orchestrator passes
+`--feedback <path>`; the dispatcher loads that file and places it in the data
+contract so the leaf skill corrects **the specific prior failure** instead of
+regenerating the same output.
+
+### 2.7.1 Feedback file schema
+
+The feedback file is YAML written by the verification stage after a failed
+build or test. The dispatcher does not author it — it only loads and forwards
+it. Expected shape:
+
+```yaml
+attempt: 2                      # 1-based; this is the attempt about to run
+prior_attempts:
+  - attempt: 1
+    stage: build | test         # where it failed
+    failure_kind: compile_error | link_error | assertion | crash | timeout
+    detail: |                   # verbatim, truncated compiler/gtest output
+      test_pixel_sad.cpp:41: Failure
+      Expected equality of these values:
+        ref_sad   -> 1184
+        arm64_sad -> 1152
+    failing_fixtures: [SadTest.Block16x16]   # gtest names, if stage == test
+    hypothesis: |               # optional: verifier's guess at root cause
+      Horizontal reduction likely used vaddvq over the wrong lane width,
+      dropping the high 64 bits of the accumulator.
+```
+
+### 2.7.2 How the leaf skill must use it
+
+The dispatcher passes `prior_attempt_feedback` through verbatim and instructs
+the routed leaf skill to, BEFORE emitting new code:
+
+1. Treat every `failing_fixtures` / `detail` entry as a hard constraint the new
+   output MUST satisfy — do not reproduce the same construct that failed.
+2. Prefer addressing the `hypothesis` root cause over cosmetic edits.
+3. If the same `failure_kind` has now recurred across attempts (visible in
+   `prior_attempts`), change *approach* (e.g. different NEON reduction, or fall
+   back per §3.5) rather than retrying the same fix — a repeated identical
+   failure means the current strategy is exhausted.
+
+### 2.7.3 Retry budget and terminal handling
+
+The orchestrator owns the retry counter, not the dispatcher. The dispatcher
+executes whatever attempt it is handed. But it MUST surface the attempt number
+in its output so a stuck loop is visible:
+
+```
+[ATTEMPT 2/K] <porting_item_id> — retrying after test failure (SadTest.Block16x16)
+```
+
+When the orchestrator's retry budget K is exhausted, it stops calling the
+dispatcher for that item and marks it `[NEEDS REVIEW]` (see §5.4) — the loop
+must have a terminal exit so one hard item never blocks the batch.
 
 ---
 
@@ -165,11 +246,23 @@ When `--mode llm-freeform`:
 - Apply all baseline constraints (16-byte alignment, flag discipline, etc.)
 - Execute migration using LLM's own knowledge within those constraints
 
-### 3.4 Inline asm detection override
+### 3.4 Inline-asm handling (spec-routed, with detection fallback)
 
-Before routing, check if `porting_item.context` contains `__asm` or `__asm__`:
-- If YES → override routing to `skills/arm64-inlineasm-to-intrinsics/` regardless of spec mapping
-- Pass the original matched_specs as supplementary context
+ARM64 inline-asm kernels are matched through the NORMAL spec pipeline:
+`arm64-inlineasm-to-intrinsics` publishes specs
+(`references/specs/inline-asm-neon.yaml`) whose match_rules fire on
+`__asm__ __volatile__` blocks and quoted AArch64 NEON mnemonics (matcher scope
+`inline_asm`). When those specs match, they resolve via `source` to this leaf
+skill through the same routing as any other spec (§3.1–3.2, §4). **Spec-based
+routing is PRIMARY.**
+
+Detection fallback (safety net, subordinate to spec routing): if
+`porting_item.context` contains `__asm` or `__asm__` but NO spec resolved to
+`arm64-inlineasm-to-intrinsics` (e.g. the matcher missed it, or the item came
+through `--mode llm-freeform`), route to `skills/arm64-inlineasm-to-intrinsics/`
+anyway and pass any matched_specs as supplementary context. This fallback only
+engages when spec routing did not already select the inline-asm skill; it never
+overrides a spec-selected primary from §4.2.
 
 ### 3.5 Leaf skill not found fallback
 
@@ -219,6 +312,16 @@ If `match_confidence.llm_confidence` == `"low"`:
 | Leaf skill directory missing | Fallback to baseline (Section 3.5) |
 | spec.yaml file missing in leaf skill | Fallback to baseline, log warning |
 | spec.md section not found | Use yaml description only, log warning |
+| `--feedback` given but file missing/unparseable | Hard error, stop (§1.3 rule 5) — never proceed as a first attempt |
+
+### 5.4 Retry exhaustion (terminal loop exit)
+
+When the orchestrator has spent its retry budget K on an item and calls the
+dispatcher no further, that item is marked `[NEEDS REVIEW]` with the last
+feedback attached, and the batch continues with the next item. The per-item
+loop MUST always terminate — either PASS (gtest green) or exhausted → review.
+An item that neither passes nor exhausts is a hung loop and is a bug in the
+orchestrator, not a valid state.
 
 ---
 

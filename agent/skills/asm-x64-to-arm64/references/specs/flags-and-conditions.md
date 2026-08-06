@@ -158,6 +158,46 @@ csel x0, x1, x0, eq
 - All `cmov<cc>` translate to `csel` (or `cset` for set-to-bool patterns).
 - `cmov` from memory is rewritten as `ldr` + `csel`.
 
+## CSEL/CSET Read the *Last* Flag-Setting Instruction — Beware Stale NZCV
+
+**ARM64**: `csel`/`cset`/`csinc`/`b.<cc>` consume whatever NZCV holds *now* — the
+result of the most recent S-suffix instruction, `cmp`, or `tst`. NZCV is not
+re-derived per condition. After an intervening `cset`/branch/unrelated `cmp`, the
+flags still reflect the **prior** comparison, not the one the current condition
+name implies. A `csel x6, a, b, ne` placed long after its governing `cmp` — with
+another `cmp` in between — selects on the wrong comparison and compiles cleanly.
+
+This bites hardest when one `cmp` is reused mentally for several selects, or when
+a value is built between the `cmp` and the `csel`.
+
+**Workaround**: Re-establish flags with a fresh `cmp`/`tst` **immediately before**
+each `csel`/`cset`/conditional branch whose condition is not the one most recently
+set. Don't let a `cmp` "carry over" across other flag-setting work.
+
+```asm
+; WRONG — the csel reads flags from `cmp w3,#18`, not the angle test it intends
+cmp     w3, #18
+b.lt    .horizontal
+...                       ; programmer assumes flags still reflect w2
+csel    x6, x13, x12, ne  ; selects on (w3 != 18), NOT (w2 != 0) as intended
+
+; CORRECT — re-establish flags for THIS csel's condition
+cmp     w2, #0
+csel    x6, x13, x12, ne  ; now selects on (w2 != 0)
+```
+
+**Pitfalls**:
+- A `cset wX, cc` followed later by a `csel ..., cc2` does not reset flags for
+  `cc2`; the second condition still reads the original `cmp`.
+- The symptom is data-dependent and subtle (e.g. a reference-pointer select that
+  always picks the wrong side for one mode/branch family), surfacing only on the
+  inputs where the two conditions disagree.
+
+**Validation**:
+- Every `csel`/`cset`/`b.<cc>` is preceded by a flag-setting instruction whose
+  comparison matches the condition being tested — no `cmp` is relied on across
+  intervening non-flag work or a different `cmp`.
+
 ## CSDB — Speculation Barrier (Spectre `lfence`)
 
 **x64**: `lfence` is sometimes used as a speculation barrier (Spectre v1

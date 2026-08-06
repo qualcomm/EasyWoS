@@ -1,0 +1,29 @@
+<?xml version='1.0'?>
+<AutomatedAnalysisConfiguration>
+  <AnalyzerConfiguration>
+    <Analyzer Name='Microsoft.Diagnostics.Tracing.AutomatedAnalysis.Analyzers.StringConcatAnalyzer'>
+      <Property Name='PercentThreshold' Value='5.0' />
+    </Analyzer>
+    <Analyzer Name='Microsoft.Diagnostics.Tracing.AutomatedAnalysis.Analyzers.UnfairSemaphoreWaitAnalyzer'>
+      <Property Name='PercentThreshold' Value='5.0' />
+    </Analyzer>
+    <Analyzer Name='Microsoft.Diagnostics.Tracing.AutomatedAnalysis.Analyzers.TimerQueueTimerFireAnalyzer'>
+      <Property Name='PercentThreshold' Value='5.0' />
+    </Analyzer>
+    <Analyzer Name='Microsoft.Diagnostics.Tracing.AutomatedAnalysis.Analyzers.WorkStealingQueueDequeueAnalyzer'>
+      <Property Name='PercentThreshold' Value='5.0' />
+    </Analyzer>
+    <Analyzer Name='Microsoft.Diagnostics.Tracing.AutomatedAnalysis.Analyzers.AwareLockContentionAnalyzer'>
+      <Property Name='PercentThreshold' Value='5.0' />
+    </Analyzer>
+	<Analyzer Name='Microsoft.Diagnostics.Tracing.AutomatedAnalysis.Analyzers.AwareLockBlockedTimeAnalyzer'>
+		<Property Name='PercentThreshold' Value='5.0' />
+	</Analyzer>
+    <Analyzer Name='Microsoft.Diagnostics.Tracing.AutomatedAnalysis.Analyzers.TraceInternalAnalysisAnalyzer'>
+      <Property Name='PercentThreshold' Value='5.0' />
+    </Analyzer>
+    <Analyzer Name='Microsoft.Diagnostics.Tracing.AutomatedAnalysis.Analyzers.OutputDebugStringWAnalysisAnalyzer'>
+      <Property Name='PercentThreshold' Value='0.0' />
+    </Analyzer>
+  </AnalyzerConfiguration>
+</AutomatedAnalysisConfiguration>

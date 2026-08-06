@@ -495,9 +495,16 @@ After all dispatcher invocation tasks, append a "Verification" section to tasks.
 - [ ] V.1 Generate gtest file `test_<name>.cpp` with per-porting-item fixtures and boundary condition tests (see Section 7 for the flow that matches the dispatched outputs)
 - [ ] V.2 Generate `CMakeLists.txt` (asm flow: FetchContent gtest + armasm64 custom command; intrinsics flow: FetchContent gtest + test_kernels_<arch>.c static library)
 - [ ] V.3 Generate `build_and_compare.bat` (see Section 7.4)
+- [ ] V.0 Negative-control gate (per fixture): before trusting any pass, prove each fixture can FAIL — see Section 7.6. A fixture that has never been observed red is not yet a valid check.
 - [ ] V.4 Build ARM64: `cmake -S . -B build -A ARM64 && cmake --build build --config Release`
 - [ ] V.5 Run tests: execute the gtest binary and verify all tests pass
+- [ ] V.6 Per-item verify → retry loop: for any fixture that fails at V.5, write a feedback file and re-dispatch that item with `--feedback` (see Section 8). Retry up to K times; on exhaustion mark the item `[NEEDS REVIEW]` and continue. Only items whose fixtures are green (and were shown red at V.0) are `[x]` done.
 ```
+
+> V.0 runs before V.4/V.5 in trust order even though the numbering places it
+> after V.3: you cannot believe a green V.5 for a fixture you never watched go
+> red. The build (V.4) must succeed first so the negative control can compile;
+> see §7.6 for the exact procedure.
 
 For the intrinsics flow, V.1 must additionally produce a `test_kernels_<arch>.c` file with the MSVC compatibility shim block at the top (see [references/unit-test-workflow-intrinsics.md](references/unit-test-workflow-intrinsics.md) — "Test Seam" section). This file IS the unit-under-test; the leaf-skill output `.c` files are NOT linked into the test binary directly.
 
@@ -607,3 +614,88 @@ Both flows use the same `build_and_compare.bat` driver — see [references/build
 - MSVC toolchain with ARM64 build tools (Visual Studio 2019+) — required for both flows. The asm flow additionally needs `armasm64` (ships with MSVC ARM64).
 - CMake 3.14+ (for FetchContent).
 - Internet access during first build (to fetch Google Test).
+
+### 7.6 Negative-control gate (prove the test can fail before trusting a pass)
+
+A green test is meaningless until the same fixture has been observed **red**. A
+leaf skill can emit an identity stub, a fixture can compare a value against
+itself, or the kernel may not be linked at all — any of these pass instantly and
+silently, and the loop then "confidently" converges on broken output. Before any
+fixture's pass is trusted (V.5), it MUST be shown failing under a deliberately
+wrong input. This is a **mandatory negative control**, one per fixture.
+
+Procedure, per fixture, after V.4 build succeeds:
+
+1. **Perturb the expected value.** In a throwaway build, alter the fixture's
+   reference so the ARM64 result and the reference genuinely disagree — e.g.
+   corrupt one byte of the reference buffer, or assert against `ref + 1`. Do NOT
+   perturb the kernel under test.
+2. **Run and confirm RED.** The fixture MUST now report failure (non-zero exit /
+   `[  FAILED  ]`). If it still passes, the check is not wired to the kernel —
+   the test is invalid; fix the fixture (wrong seam, comparing self-to-self,
+   kernel not linked) before proceeding. Do not continue on a fixture that
+   refuses to go red.
+3. **Revert the perturbation** and rebuild clean. Only now does a green result at
+   V.5 count as a real pass.
+
+Record which fixtures were shown red. A fixture that passed at V.5 but was never
+observed red at V.0 is reported as **unverified**, not as passing — state this
+plainly rather than claiming correctness that was never failure-tested.
+
+> Cheap batch form: a single `--gtest_filter` run against a build with all
+> references perturbed by `+1` should turn the ENTIRE suite red. A suite that
+> stays partly green under global perturbation has dead fixtures — investigate
+> before trusting any of it.
+
+---
+
+## 8. Verify → Retry Loop (per-item feedback closure)
+
+Sections 5–7 dispatch each item once and verify the batch once. This section
+closes the loop: a fixture that fails at V.5 feeds its failure back into the
+dispatcher so the item is re-ported with knowledge of what broke, instead of a
+human hand-re-running the command. This is the only feedback edge in the
+pipeline, and it turns the DAG into a per-item loop:
+
+```
+dispatch(item) → leaf skill → build+gtest ─ green (shown red at V.0) → done [x]
+                                          └ red → write feedback → re-dispatch --feedback ↺ (≤ K)
+                                                                    └ K exhausted → [NEEDS REVIEW]
+```
+
+### 8.1 Loop ownership
+
+The orchestrator (this skill's task list) owns the loop: the retry counter, the
+terminal exit, and writing the feedback file. The dispatcher and leaf skills are
+stateless executors of a single attempt (dispatcher §2.7). Default retry budget
+**K = 3** per item; tune per project.
+
+### 8.2 Writing the feedback file
+
+On a V.5 failure for item `<id>`, write `feedback/<id>.attempt<N>.yaml` in the
+schema of dispatcher §2.7.1: capture `stage`, `failure_kind`, verbatim
+truncated `detail`, `failing_fixtures`, and — where the cause is diagnosable —
+a `hypothesis`. Accumulate prior attempts in `prior_attempts` so a recurring
+identical failure is visible to the leaf skill (dispatcher §2.7.2 rule 3).
+
+### 8.3 Re-dispatch
+
+Re-invoke the same command the item was generated with (§5.2/§5.4), adding
+`--feedback feedback/<id>.attempt<N>.yaml`:
+
+```markdown
+- [ ] 3.2r Retry `pixel-sad` (attempt 2/3, prior: SadTest.Block16x16 assertion) → specs: [33,58]
+  `/dispatcher-skill pixel-sad --specs 33,58 --source <matched-yaml> --feedback feedback/pixel-sad.attempt2.yaml`
+```
+
+After re-dispatch, re-run only the affected fixtures (`--gtest_filter`), and
+re-apply the V.0 negative control to any fixture whose seam changed.
+
+### 8.4 Terminal exit (no item blocks the batch)
+
+- **Pass:** fixture green AND shown red at V.0 → mark the item `[x]`.
+- **Exhausted:** K attempts all red → stop retrying, mark `[NEEDS REVIEW]` with
+  the last feedback file path, continue to the next item. Never let one hard
+  item stall the whole batch.
+- Items are independent kernels, so retries for different items may proceed
+  concurrently; the loop is per-item, not a global barrier.

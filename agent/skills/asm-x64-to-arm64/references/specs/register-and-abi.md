@@ -148,6 +148,62 @@ function must spill any live values from caller-saved registers before the
 - Callee-saved values are not held in `x0–x18` or `v0–v7, v16–v31` across a `bl` call.
 - `x16`/`x17` are not relied on across `bl`.
 
+## W-Register Writes Destroy the Upper Half of the X-Register
+
+**ARM64**: Writing a 32-bit `wN` register **zero-extends** into the full 64-bit
+`xN` — bits 63:32 are cleared, not preserved. `wN` and `xN` are the same physical
+register. Any 32-bit operation (`ldrb wN`, `add wN,...`, `mov wN,...`, `lsl wN,...`)
+silently destroys a 64-bit pointer or value living in the same register.
+
+This is the single most recurring porting bug in practice, in two forms:
+
+1. **In-function aliasing.** A function loads a byte/word into `wN` for a
+   computation while `xN` still holds a live 64-bit pointer (often a re-derived
+   base address). The `wN` write clobbers the pointer; a later `str`/`ldr [xN]`
+   faults or writes to a wild address.
+2. **Helper reached by `bl`.** A worker routine called repeatedly in a loop
+   returns its result in — or uses as scratch — a `wN` whose `xN` the **caller**
+   keeps live across the call (a pointer it advances between calls). The first
+   call corrupts the caller's pointer; the crash PC is at the *next* load/store,
+   far from the real bug.
+
+**Workaround**: Return helper results and stage scratch in a register the caller
+does **not** keep live across the `bl` (a dedicated clobber register, e.g. one of
+`x9–x15`), never `x0`/the argument-pointer registers if those are reused as live
+pointers. Inside a function, never form an address into the same register you
+later read a narrow value from with a `w`-form.
+
+```gas
+// WRONG — x9 holds a live pointer the dup reads back as data
+ldrb    w9, [x2]          // load corner byte into w9 (== low half of x9)
+add     x9, x2, #1        // OVERWRITES x9 with an ADDRESS — w9 corner lost
+dup     v5.8h, w9         // broadcasts the pointer bits, not the corner
+
+// CORRECT — keep the value in w9, build the pointer in a different reg
+ldrb    w9,  [x2]
+add     x10, x2, #1
+dup     v5.8h, w9
+```
+
+**Pitfalls**:
+- A doc-comment claiming "returns result in w0, preserves x0..x3" is
+  self-contradictory: `w0` *is* `x0`. Trust the register algebra, not the comment.
+- Emulators and small inputs often mask this — the 8x8 / single-iteration path
+  returns before reusing the clobbered register, so only the looped/larger sizes
+  crash. Exercise the multi-call path.
+- Symmetric for `d`/`s`-form SIMD: a `.2s`/`.4h`/`.8b`/`d`-form write **zeroes
+  the upper 64 bits** of the V register. Don't reuse a `.4s` accumulator for an
+  8-wide-tail `d`-form write — use a separate accumulator.
+
+**Validation**:
+- No `bl`-reached helper returns in or scratches a register whose `x`-form the
+  caller keeps live (pointer advanced across calls) — results go to a dedicated
+  clobber GPR.
+- Within a function, no register is written with a `w`-form while its `x`-form
+  must still hold a live 64-bit pointer/value.
+- Narrow (`.2s`/`.4h`/`.8b`/`d`-form) vector writes do not silently clear an
+  accumulator's upper lanes that a later full-width op reads.
+
 ## Special-Purpose Registers
 
 | Register | x64 | arm64 | Notes |

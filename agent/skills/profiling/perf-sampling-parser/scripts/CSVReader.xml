@@ -1,0 +1,187 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>CSVReader</name>
+    </assembly>
+    <members>
+        <member name="T:CSVReader.CSVReader">
+            <summary>
+            This class knows how to read XPERF CSV files (or compressed CSV files)
+            </summary>
+        </member>
+        <member name="P:CSVReader.CSVReader.StackEventNames">
+            <summary>
+            A list of event names that are have stacks associated with them in the trace.
+            
+            These are storted. 
+            </summary>
+        </member>
+        <member name="P:CSVReader.CSVReader.EventNames">
+            <summary>
+            The list of any event in the trace
+            
+            These are storted. 
+            </summary>
+        </member>
+        <member name="M:CSVReader.CsvEventSource.GetColumnNames(System.Int32)">
+            <summary>
+            Returns an array of column names for the record with record type 'recordId'. 
+            If 'columnSpec' is non-null only those columns specified are returned (the rest are null)
+            </summary>
+        </member>
+        <member name="M:ETLStackBrowse.ByteWindow.ToString">
+            <summary>
+            Useful in debugging.  Not intended for normal use
+            </summary>
+        </member>
+        <member name="P:ETLStackBrowse.ByteWindow.Dump">
+            <summary>
+            Useful in debugging.  Not intended for normal use
+            </summary>
+        </member>
+        <member name="M:System.IO.Compression2.InputBuffer.CopyTo(System.Byte[],System.Int32,System.Int32)">
+            Copies length bytes from input buffer to output buffer starting
+            at output[offset].  You have to make sure, that the buffer is
+            byte aligned.  If not enough bytes are available, copies fewer
+            bytes.
+            Returns the number of bytes copied, 0 if no byte is available.
+        </member>
+        <member name="T:EventSources.EventSource">
+            <summary>
+            An EventSource is an abstraction that provides all the functionality that is needed by PerfView's Events viewer GUI.
+            Anything that implements this interface can be viewed in the Events Viewer.
+            
+            The main functionality that subclasses implement is the 'Events' enumeration.   
+            </summary>
+        </member>
+        <member name="M:EventSources.EventSource.ForEach(System.Func{EventSources.EventRecord,System.Boolean})">
+            <summary>
+            ForEach is the most important property, calls 'callback' for each event in turn.
+            If the callback return false, then the foreach does not deliver any more callbacks.  
+            </summary>
+        </member>
+        <member name="F:EventSources.EventSource.StartTimeRelativeMSec">
+            <summary>
+            Filter out any events less than StartTimeRelativeMSec
+            </summary>
+        </member>
+        <member name="F:EventSources.EventSource.EndTimeRelativeMSec">
+            <summary>
+            Filter out any events greater than EndTimeRelativeMSec
+            </summary>
+        </member>
+        <member name="F:EventSources.EventSource.MaxRet">
+            <summary>
+            The maximum number of events to return.    Will return an eventrecord with a null EventName after this (but a valid timestamp).  
+            </summary>
+        </member>
+        <member name="F:EventSources.EventSource.ProcessFilterRegex">
+            <summary>
+            If set, only display events from a process that matches this regular expression
+            </summary>
+        </member>
+        <member name="P:EventSources.EventSource.ProcessNames">
+            <summary>
+            The list of all process names (exe names without the .EXE) in the collection (optional, null if not known)) 
+            </summary>
+        </member>
+        <member name="F:EventSources.EventSource.TextFilterRegex">
+            <summary>
+            If set, only display events that have this regular expression in their 'ToString' (this is relative expensive)
+            </summary>
+        </member>
+        <member name="M:EventSources.EventSource.SetEventFilter(System.Collections.Generic.List{System.String})">
+            <summary>
+            After calling this method with a list of event Names, the Events enumeration will only return
+            records of events with one of these names.  
+            </summary>
+        </member>
+        <member name="P:EventSources.EventSource.EventNames">
+            <summary>
+            returns the set of names for events in the collection (used to populate the left pane in the display.  
+            </summary>
+        </member>
+        <member name="F:EventSources.EventSource.ColumnsToDisplay">
+            <summary>
+            Set the columns you wish to show up as Field1, Field2, ...
+            Use AllColumnNames to get a valid list of names to use here.  
+            </summary>
+        </member>
+        <member name="M:EventSources.EventSource.AllColumnNames(System.Collections.Generic.List{System.String})">
+            <summary>
+            Optionally you can provide a list of columns available.  
+            </summary>
+        </member>
+        <member name="P:EventSources.EventSource.FilterQueryExpressionTree">
+            <summary>
+            An optional filter query expression tree that'll be used to filter different events. 
+            </summary>
+        </member>
+        <member name="F:EventSources.EventSource.NonRestFields">
+            <summary>
+            The number of fields that are NOT put in the 'rest' column.  Defaults to 4
+            </summary>
+        </member>
+        <member name="P:EventSources.EventSource.ColumnSums">
+            <summary>
+            Optionally, the implementation can provide the sum of every entry in each column specified in 'ColumnsToDisplay'. 
+            This will be set by the implementation when the 'Events' enumeration is scanned. 
+            </summary>
+        </member>
+        <member name="F:EventSources.EventSource.MaxEventTimeRelativeMsec">
+            <summary>
+            If the source knows a bound on the times of all the events it sets this.  Should be set to PositiveInfinity if it is unknown.
+            </summary>
+        </member>
+        <member name="M:EventSources.EventSource.Clone">
+            <summary>
+            Clones the EventSource, so you can have multiple windows opened on the same set of data.   
+            </summary>
+            <returns></returns>
+        </member>
+        <member name="M:EventSources.EventSource.ParseColumns(System.String,System.Collections.Generic.ICollection{System.String})">
+            <summary>
+            Utility function that takes a specification for columns (which can include *) and the raw list of
+            all possible columns and returns the list that match the specification. This function also extracts the event filter query and creates a FilterQueryExpressionTree.
+            </summary>
+        </member>
+        <member name="T:EventSources.Payload">
+            <summary>
+            A Payload object represents the Rest string from EventRecord as Object to make working 
+            with the values inside easier
+            </summary>
+        </member>
+        <member name="T:EventSources.EventRecord">
+            <summary>
+            An EventRecord is a abstraction that is returned by the EventSource.Events API.   It represents
+            a single event and is everything the GUI needs to display the event in the GUI.   
+            </summary>
+        </member>
+        <member name="P:EventSources.EventRecord.FieldNames">
+            <summary>
+            The names of the fields in this record
+            </summary>
+        </member>
+        <member name="M:EventSources.EventRecord.Field(System.Int32)">
+            <summary>
+            This fetches fields from the record.  The index corresponds to the FieldNames array.
+            </summary>
+        </member>
+        <member name="P:EventSources.EventRecord.DisplayFields">
+            <summary>
+            The current contract is that the array is undefined above the 'non-rest' fields (currently we have a max of 4).  
+            </summary>
+        </member>
+        <member name="P:EventSources.EventRecord.Rest">
+            <summary>
+            Displays fields as key-value pairs.  
+            </summary>
+        </member>
+        <member name="F:EventSources.EventRecord.m_displayFields">
+            <summary>
+            m_displayFields are the fields ordered by how the EventSource.ColumnsToDisplay says they should be ordered.
+            m_displayField[5] is currently the Rest field.  
+            </summary>
+        </member>
+    </members>
+</doc>

@@ -1,0 +1,89 @@
+version: "1.0"
+generated_from: skills/arm64-inlineasm-to-intrinsics/references/specs/inline-asm-neon.md
+description: >
+  Detection and porting reference for GCC/Clang-style ARM64 NEON inline
+  assembly (__asm__ __volatile__ blocks with quoted AArch64 instruction
+  strings and "+r"/"r"/clobber operand constraints) that must be rewritten
+  as MSVC-compatible NEON C intrinsics behind a _MSC_VER/_M_ARM64 guard,
+  validated by a GoogleTest asm-vs-intrinsics equivalence project.
+
+specs:
+  - id: 1
+    name: arm64-neon-inline-asm-block
+    category: inline-asm-detection
+    description: >
+      A GCC/Clang ARM64 NEON kernel expressed as an __asm__ __volatile__ (or
+      asm volatile) block: quoted AArch64 instruction strings plus GNU
+      extended-asm output/input operand constraints and a clobber list of
+      vector registers, memory, and cc. MSVC has NO ARM64 inline asm, so this
+      must be translated to NEON intrinsics guarded by a _MSC_VER and
+      (_M_ARM64 or _M_ARM64EC) check, keeping the original asm in the else
+      branch, and proven equivalent with the bundled Verification gtest project.
+    metadata:
+      match_rules:
+        - pattern: "(?:__asm__|asm)\\s+(?:__volatile__|volatile)?\\s*\\("
+          type: regex
+          scope: inline_asm
+          description: GCC/Clang extended inline-asm block opener
+        - pattern: "\\b[+=]?r\\b"
+          type: regex
+          scope: inline_asm
+          description: GNU extended-asm output/input register operand constraint
+        - pattern: "\\b(?:memory|cc)\\b"
+          type: regex
+          scope: inline_asm
+          description: Clobber-list entry (memory / cc) that fixes this as extended inline asm
+    x64_constructs:
+      - "N/A - input is already AArch64 inline asm, not x86; this is a GCC-inline-asm to MSVC-intrinsics toolchain port"
+    arm64_constructs:
+      - "guarded intrinsics branch on _MSC_VER and (_M_ARM64 or _M_ARM64EC); original asm preserved in else; endif"
+      - "Verification gtest project comparing kernel_reference (asm) vs kernel_intrinsics (NEON)"
+    pitfalls:
+      - "MSVC cl.exe cannot compile GCC inline asm; the else asm branch only builds under clang/gcc"
+      - "Dropping operand post-increments or clobbers when lifting the asm into a Verification wrapper corrupts semantics"
+    validation_criteria:
+      - "Intrinsics branch guarded by _MSC_VER and (_M_ARM64 or _M_ARM64EC); original asm preserved in else"
+      - "Verification gtest builds under clang-cl and asm equals intrinsics byte-for-byte"
+
+  - id: 2
+    name: arm64-neon-asm-mnemonic-stream
+    category: inline-asm-detection
+    description: >
+      The quoted AArch64 NEON instruction stream inside an inline-asm block:
+      load/store (ld1/st1), constant build (movi/ushr), bit-reverse (rbit),
+      logical (eor/and/orr), lane move (mov/ext), and the polynomial-multiply
+      family (pmull/pmull2) that anchors GF(2^128)/GHASH and PMULL crypto
+      kernels. Each maps to a specific NEON intrinsic (vld1q/vst1q, vdupq/vshrq,
+      vrbitq_u8, veorq_u8, vextq_u8, vmull_p64/vmull_high_p64 with
+      vreinterpretq_u8_p128).
+    metadata:
+      match_rules:
+        - pattern: "\\bpmull2?\\b"
+          type: regex
+          scope: inline_asm
+          description: Polynomial carryless multiply (pmull/pmull2) mapping to vmull_p64 / vmull_high_p64
+        - pattern: "\\brbit\\b"
+          type: regex
+          scope: inline_asm
+          description: Bit-reverse (rbit) mapping to vrbitq_u8 (GHASH bit-order)
+        - pattern: "\\b(?:ld1|st1)\\b"
+          type: regex
+          scope: inline_asm
+          description: NEON structure load/store (ld1/st1) mapping to vld1q_ / vst1q_
+        - pattern: "\\b(?:movi|ushr|ext|eor)\\b"
+          type: regex
+          scope: inline_asm
+          description: NEON const-build / shift / lane-move / xor mnemonics
+    x64_constructs:
+      - "N/A - AArch64 mnemonics, not x86"
+    arm64_constructs:
+      - "pmull/pmull2 to vmull_p64 (low form compiler-divergent) / vmull_high_p64; wrap with vreinterpretq_u8_p128"
+      - "rbit to vrbitq_u8; ext #8 to vextq_u8(a,b,8); eor to veorq_u8; movi 0x87 + ushr 56 to vreinterpretq_p64_u64(vdupq_n_u64(0x87))"
+    pitfalls:
+      - "vmull_p64 LOW form diverges by NEON HEADER: clang's arm_neon.h takes scalar poly64_t (vgetq_lane_p64); MSVC's arm64_neon.h takes __n64 (vget_low_p64). Bridge with a helper."
+      - "GUARD ON THE HEADER, NOT THE DRIVER: clang-cl defines _MSC_VER but ships clang's arm_neon.h, so `#if defined(_MSC_VER)` alone picks the wrong branch and fails to compile. Use `#if defined(_MSC_VER) && !defined(__clang__)` for the real-MSVC form."
+      - "poly128_t is unnamed on MSVC - never name it; wrap the pmull result immediately in vreinterpretq_u8_p128"
+      - "PMULL needs a crypto target feature under clang/clang-cl (-march=armv8-a+crypto or +aes), else 'always_inline vmull_p64 requires target feature aes'. MSVC cl.exe enables it unconditionally on ARM64."
+    validation_criteria:
+      - "Every quoted mnemonic maps to a NEON intrinsic with matching signedness/lane width"
+      - "pmull LOW form split on _MSC_VER; HIGH form vmull_high_p64 shared"

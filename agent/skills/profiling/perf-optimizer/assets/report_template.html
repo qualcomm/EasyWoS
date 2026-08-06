@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Performance Report</title>
+  <style>
+    /* Linear-inspired palette: minimal, monochrome, restrained accents. */
+    :root {
+      --bg: #08080B;
+      --surface: #0E0E11;
+      --surface-2: #14141A;
+      --surface-3: #1B1B22;
+      --code-bg: #050507;
+      --border: rgba(255, 255, 255, 0.06);
+      --border-strong: rgba(255, 255, 255, 0.10);
+      --text: #F4F4F5;
+      --text-2: #A1A1AA;
+      --text-3: #71717A;
+      --accent: #8B8FF7;
+      --accent-soft: rgba(139, 143, 247, 0.10);
+      --warn: #F4A672;
+      --warn-soft: rgba(244, 166, 114, 0.08);
+      --warn-border: rgba(244, 166, 114, 0.20);
+      --danger: #F4768C;
+      --danger-soft: rgba(244, 118, 140, 0.08);
+      --danger-border: rgba(244, 118, 140, 0.20);
+      --good: #6EE7B7;
+      --good-soft: rgba(110, 231, 183, 0.08);
+      --good-border: rgba(110, 231, 183, 0.20);
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 10px;
+      --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: var(--sans);
+      color: var(--text);
+      background: var(--bg);
+      font-size: 13px;
+      line-height: 1.5;
+      letter-spacing: -0.005em;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .shell {
+      width: min(1280px, calc(100vw - 48px));
+      margin: 32px auto 64px;
+    }
+
+    /* Hero */
+    .hero {
+      padding: 24px 28px 26px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      margin-bottom: 12px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-3);
+      letter-spacing: 0.04em;
+      margin-bottom: 14px;
+    }
+    .eyebrow::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      line-height: 1.2;
+      max-width: 80ch;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--text-2);
+      font-size: 13px;
+      line-height: 1.65;
+      max-width: 80ch;
+    }
+
+    /* Grids */
+    .grid-metrics, .grid-main, .grid-flame, .grid-detail, .grid-summary {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .grid-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid-main    { grid-template-columns: 1fr 1fr; }
+    .grid-flame   { grid-template-columns: 1fr; }
+    .grid-detail  { grid-template-columns: 1fr 1fr; }
+    .grid-summary { grid-template-columns: 1.1fr 0.9fr; }
+
+    /* Cards */
+    .card {
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-head h2, .card-head h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .card-head.compact { padding: 12px 14px 10px; }
+    .sub {
+      margin-top: 4px;
+      color: var(--text-3);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .card-body { padding: 14px 16px 16px; }
+    .card-body.compact { padding: 10px 12px 12px; }
+    .card-body.flush { padding: 0; }
+
+    /* Metric tiles */
+    .metric {
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .metric .label {
+      color: var(--text-3);
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-family: var(--mono);
+      margin-bottom: 10px;
+    }
+    .metric .value {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+      margin-bottom: 6px;
+    }
+    .metric .desc {
+      color: var(--text-2);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+
+    /* Process rows */
+    .proc-list {
+      display: grid;
+      gap: 4px;
+      max-height: 320px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .proc-row {
+      position: relative;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: transparent;
+      overflow: hidden;
+      transition: border-color 0.12s ease, background-color 0.12s ease;
+    }
+    .proc-row:hover { border-color: var(--border-strong); background: rgba(255,255,255,0.015); }
+    .proc-row .bar {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0%;
+      background: rgba(255, 255, 255, 0.025);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .proc-row.hot .bar { background: var(--warn-soft); }
+    .proc-row > * { position: relative; z-index: 1; }
+    .proc-row .top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+    .proc-row .name {
+      font-weight: 500;
+      font-size: 12.5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .proc-row .pid {
+      color: var(--text-3);
+      font-family: var(--mono);
+      font-size: 10.5px;
+      margin-left: 6px;
+      font-weight: 400;
+    }
+    .proc-row .meta {
+      margin-top: 2px;
+      color: var(--text-3);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Chips */
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--surface-2);
+      color: var(--text-2);
+      font-size: 11px;
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+    .chip.hot {
+      color: var(--warn);
+      border-color: var(--warn-border);
+      background: var(--warn-soft);
+    }
+    .proc-row .chip { padding: 2px 7px; font-size: 11px; }
+
+    /* List */
+    .list {
+      display: grid;
+      gap: 4px;
+      max-height: 320px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .list-item {
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: transparent;
+      transition: border-color 0.12s ease;
+    }
+    .list-item:hover { border-color: var(--border-strong); }
+    .list-item strong {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: -0.005em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .small { color: var(--text-3); font-size: 11px; line-height: 1.5; }
+
+    /* Speedscope */
+    .speedscope-frame {
+      width: 100%;
+      height: 680px;
+      border: 0;
+      display: block;
+      background: #1c1816;
+    }
+    .speedscope-toolbar {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      background: var(--surface);
+    }
+    .speedscope-toolbar .seg {
+      display: inline-flex;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      background: var(--surface-2);
+    }
+    .speedscope-toolbar .seg button {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--text-2);
+      font-family: var(--sans);
+      font-size: 12px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: color 0.12s, background 0.12s;
+    }
+    .speedscope-toolbar .seg button:hover { color: var(--text); background: rgba(255,255,255,0.025); }
+    .speedscope-toolbar .seg button.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .speedscope-toolbar .seg button + button {
+      border-left: 1px solid var(--border-strong);
+    }
+    .speedscope-toolbar .btn {
+      appearance: none;
+      border: 1px solid var(--border-strong);
+      background: var(--surface-2);
+      color: var(--text-2);
+      font-family: var(--sans);
+      font-size: 12px;
+      padding: 6px 11px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: color 0.12s, background 0.12s, border-color 0.12s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .speedscope-toolbar .btn:hover {
+      color: var(--text);
+      background: rgba(255,255,255,0.03);
+      border-color: rgba(255,255,255,0.18);
+    }
+    .speedscope-toolbar .btn.copied {
+      color: var(--good);
+      border-color: var(--good-border);
+      background: var(--good-soft);
+    }
+    .speedscope-toolbar .spacer { flex: 1; }
+    .speedscope-toolbar code {
+      max-width: 360px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      direction: rtl;
+      text-align: left;
+    }
+    .speedscope-status {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-3);
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .speedscope-status .ok { color: var(--good); }
+    .speedscope-status .err { color: var(--danger); }
+    .speedscope-pane { display: none; }
+    .speedscope-pane.active { display: block; }
+    .speedscope-online-msg {
+      padding: 60px 24px;
+      text-align: center;
+      color: var(--text-2);
+      font-size: 13px;
+      line-height: 1.7;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+    .speedscope-online-msg .big {
+      font-size: 15px;
+      color: var(--text);
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+    .speedscope-online-msg .path {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 8px 12px;
+      font-family: var(--mono);
+      font-size: 12px;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      max-width: 100%;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .mono, code {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      background: var(--surface-2);
+      padding: 1px 6px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+      table-layout: fixed;
+    }
+    th, td {
+      padding: 9px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+    /* Long C++ template / mangled names need to wrap inside table cells */
+    table td.mono, table td .mono {
+      white-space: normal;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      display: inline-block;
+      max-width: 100%;
+      vertical-align: top;
+    }
+    table td .chip {
+      max-width: 100%;
+      white-space: normal;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+    th {
+      color: var(--text-3);
+      font-size: 10.5px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-family: var(--mono);
+    }
+    tbody tr:hover { background: rgba(255, 255, 255, 0.015); }
+    tbody tr:last-child td { border-bottom: 0; }
+
+    .pct-bar {
+      position: relative;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+      min-width: 80px;
+    }
+    .pct-bar i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+    }
+
+    /* Final Summary */
+    .summary-list { display: grid; gap: 6px; }
+    .summary-item {
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .summary-item strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12.5px;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+    }
+    .summary-item p {
+      margin: 0;
+      color: var(--text-2);
+      line-height: 1.6;
+      font-size: 12.5px;
+    }
+    ol.action-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-2);
+      line-height: 1.7;
+      font-size: 12.5px;
+    }
+    ol.action-list li { margin-bottom: 4px; }
+    ol.action-list li:last-child { margin-bottom: 0; }
+
+    /* Root Cause Diagnosis */
+    .rc-lead {
+      padding: 16px 18px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border-strong);
+      background: var(--surface-2);
+      font-size: 13px;
+      line-height: 1.6;
+      margin-bottom: 18px;
+    }
+    .rc-lead-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .rc-lead .conf {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      font-size: 10.5px;
+      letter-spacing: 0.06em;
+      font-family: var(--mono);
+      background: var(--danger-soft);
+      color: var(--danger);
+      border: 1px solid var(--danger-border);
+    }
+    .rc-lead .impact {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      font-size: 10.5px;
+      font-family: var(--mono);
+      background: var(--warn-soft);
+      color: var(--warn);
+      border: 1px solid var(--warn-border);
+    }
+    .rc-lead-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .rc-lead-body {
+      color: var(--text-2);
+    }
+
+    .rc-grid { display: grid; gap: 6px; margin-bottom: 18px; grid-template-columns: 1fr; }
+    .rc-step {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 14px 16px;
+    }
+    .rc-step-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .rc-step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: var(--radius-sm);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--surface-3);
+      color: var(--text);
+      border: 1px solid var(--border-strong);
+      flex-shrink: 0;
+    }
+    .rc-step-title {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      flex: 1;
+      min-width: 0;
+    }
+    .rc-step-loc {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-3);
+      background: var(--surface-2);
+      padding: 1px 7px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .rc-step pre {
+      margin: 0 0 10px;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      color: #C8CDD9;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      line-height: 1.6;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .rc-step .obs {
+      color: var(--text-2);
+      font-size: 12.5px;
+      line-height: 1.65;
+      padding-left: 10px;
+      border-left: 2px solid var(--border-strong);
+    }
+
+    .rc-fix {
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      margin-bottom: 6px;
+    }
+    .rc-fix:last-child { margin-bottom: 0; }
+    .rc-fix-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .rc-prio {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: 0.04em;
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      font-weight: 500;
+    }
+    .rc-prio.high { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-border); }
+    .rc-prio.med  { background: var(--warn-soft);   color: var(--warn);   border: 1px solid var(--warn-border); }
+    .rc-prio.low  { background: var(--surface-2);   color: var(--text-2); border: 1px solid var(--border-strong); }
+    .rc-fix-title {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      flex: 1;
+      min-width: 0;
+    }
+    .rc-fix-gain {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--good);
+      background: var(--good-soft);
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--good-border);
+    }
+    .rc-fix-body {
+      color: var(--text-2);
+      font-size: 12.5px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+    .rc-fix-verify {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--good-soft);
+      border: 1px solid var(--good-border);
+      color: #A7E5C8;
+      font-size: 11.5px;
+      line-height: 1.6;
+    }
+    .rc-fix-verify b {
+      color: var(--good);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.10em;
+      margin-right: 8px;
+    }
+
+    .rc-scope {
+      margin-top: 14px;
+      padding: 10px 13px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-3);
+      font-size: 11.5px;
+      line-height: 1.6;
+    }
+    .rc-scope b {
+      color: var(--text-2);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.10em;
+      margin-right: 8px;
+    }
+
+    .rc-section-label {
+      margin: 14px 0 8px;
+      color: var(--text-3);
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-family: var(--mono);
+      font-weight: 500;
+    }
+    .rc-section-label:first-child { margin-top: 0; }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.15); }
+
+    @media (max-width: 1100px) {
+      .grid-metrics, .grid-main, .grid-detail, .grid-summary { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="eyebrow">PERFORMANCE REPORT</div>
+      <h1 id="heroTitle">CPU 性能根因分析报告</h1>
+      <p id="heroText">
+        该报告融合 ETL 进程 CPU 占用、嵌入式 speedscope 火焰图、模块/函数热点统计与最终分析结论。
+      </p>
+    </section>
+
+    <section class="grid-metrics" id="metrics"></section>
+
+    <section class="grid-main">
+      <article class="card">
+        <div class="card-head compact">
+          <h2>Top Processes by CPU Usage</h2>
+          <div class="sub">基于进程树 JSON 的进程 CPU 占用排行榜。</div>
+        </div>
+        <div class="card-body compact">
+          <div id="topProcesses" class="proc-list"></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head compact">
+          <h2>热点概览</h2>
+          <div class="sub">最关键线程、模块和函数，先看全局再钻取细节。</div>
+        </div>
+        <div class="card-body compact">
+          <div class="list" id="overviewList"></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid-flame">
+      <article class="card">
+        <div class="card-head">
+          <h2>Flame Graph Explorer</h2>
+          <div class="sub">默认嵌入式渲染：profile 已 inline 进 HTML，零依赖直接显示。如需在 speedscope.app 打开或使用本地服务器，见右上角按钮 / 切换 Tab。</div>
+        </div>
+
+        <div class="speedscope-toolbar">
+          <div class="seg" role="tablist">
+            <button id="tabEmbedded" class="active" type="button">嵌入式 (offline)</button>
+            <button id="tabLocal" type="button">本地服务器</button>
+          </div>
+          <div class="spacer"></div>
+          <button id="btnOpenApp" class="btn" type="button" title="在新标签页打开 speedscope.app（自动复制 profile 路径，可拖拽到页面里）">在 speedscope.app 打开 ↗</button>
+          <button id="btnCopyPath" class="btn" type="button" title="复制 profile 文件绝对路径到剪贴板">复制文件路径</button>
+        </div>
+
+        <div id="paneEmbedded" class="speedscope-pane active">
+          <iframe id="embeddedFrame" class="speedscope-frame"
+                  title="Speedscope Flame Graph (embedded)"
+                  loading="lazy"></iframe>
+        </div>
+
+        <div id="paneLocal" class="speedscope-pane">
+          <div class="speedscope-status" id="speedscopeStatus">
+            <span>启动方式：</span>
+            <code id="cmdHint">node speedscope/server.js i4Tools.speedscope.json</code>
+            <span id="connState">未检测到本地服务...</span>
+            <button id="btnRetryConn" class="btn" type="button" style="margin-left:auto">重新检测</button>
+          </div>
+          <iframe id="speedscopeFrame" class="speedscope-frame"
+                  title="Speedscope Flame Graph"
+                  loading="lazy"></iframe>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid-detail">
+      <article class="card">
+        <div class="card-head">
+          <h2>Module Self Time</h2>
+          <div class="sub">模块独占 CPU 时间，越高越说明真正做事的地方就在该模块内部。</div>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr><th>Module</th><th>Self Time</th><th>Self %</th><th>Distribution</th></tr>
+            </thead>
+            <tbody id="moduleSelfTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Top Functions by Self Time</h2>
+          <div class="sub">按函数独占时间排序。它们通常是最应该优先优化的内层热点。</div>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr><th>Function</th><th>Module</th><th>Self Time</th><th>Self %</th></tr>
+            </thead>
+            <tbody id="topFunctionsTable"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid-flame">
+      <article class="card" id="rootCauseCard">
+        <div class="card-head">
+          <h2>Root Cause Diagnosis</h2>
+          <div class="sub">基于源码扫描的根因证据链。每一步都来自实际源码文件，可复制 <span class="mono">file:lines</span> 定位。</div>
+        </div>
+        <div class="card-body">
+          <div id="rcLead"></div>
+          <div class="rc-section-label">证据链 (按因果顺序)</div>
+          <div id="rcEvidence" class="rc-grid"></div>
+          <div class="rc-section-label">优化方案 (按优先级)</div>
+          <div id="rcFixes"></div>
+          <div id="rcScope" class="rc-scope" style="display:none"></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid-summary">
+      <article class="card">
+        <div class="card-head">
+          <h2>Hot Functions with Call Chain Attribution</h2>
+          <div class="sub">展示热点函数、可疑调用模块以及高权重调用链，用于从系统模块穿透到真正根因模块。</div>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr><th>Frame</th><th>Self</th><th>Suspect Caller</th><th>Caller / Top Chain</th></tr>
+            </thead>
+            <tbody id="hotFunctionsTable"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Final Summary</h2>
+          <div class="sub">结合火焰图、模块自耗时和源码扫描得出的最终分析结论。</div>
+        </div>
+        <div class="card-body">
+          <div id="summaryFindings" class="summary-list"></div>
+          <div style="height:16px"></div>
+          <h3 style="margin:0 0 10px;font-size:15px;">Recommended Actions</h3>
+          <ol id="summaryActions" class="action-list"></ol>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script src="./report_data.js"></script>
+  <script>
+    const data = window.REPORT_DATA || {};
+    const topProcessesData = data.topProcesses || { processes: [], totalCpuMs: 0 };
+    const perf = data.perf || {};
+    const summary = data.summary || { findings: [], actions: [] };
+    const embed = data.speedscopeEmbed || {
+      serverUrl: 'http://localhost:8888',
+      autoHtml: 'index-auto.html',
+      profileFile: 'i4Tools_16556.speedscope.json'
+    };
+
+    const fmtMs = v => `${Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })} ms`;
+    const fmtPct = v => `${Number(v || 0).toFixed(2)}%`;
+    const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+    function metric(label, value, desc) {
+      return `
+        <div class="metric">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+          <div class="desc">${desc}</div>
+        </div>
+      `;
+    }
+
+    function renderMetrics() {
+      const totalCpu = perf.total_cpu_ms || topProcessesData.totalCpuMs || 0;
+      const topModule = (perf.module_self_time || [])[0] || {};
+      const topFunc = (perf.hot_functions || [])[0] || {};
+      const threadCount = perf.thread_count || 0;
+      document.getElementById('metrics').innerHTML = [
+        metric('Total CPU', fmtMs(totalCpu), '整个分析窗口内累计 CPU 时间'),
+        metric('Threads', String(threadCount), 'SpeedScope 中纳入 CPU 采样的线程数'),
+        metric('Top Module Self', `${topModule.module || 'n/a'} · ${fmtPct(topModule.self_pct || 0)}`, '模块独占 CPU 的主导者'),
+        metric('Top Function Self', `${(topFunc.function || topFunc.frame || 'n/a')} · ${fmtPct(topFunc.self_pct || 0)}`, '函数级别最热的单点热点')
+      ].join('');
+    }
+
+    function renderTopProcesses() {
+      const list = topProcessesData.processes || [];
+      const max = list.reduce((m, p) => Math.max(m, p.cpuPct || 0), 0) || 1;
+      document.getElementById('topProcesses').innerHTML = list.map((p, idx) => {
+        const hot = (p.cpuPct || 0) >= 5 || idx === 0;
+        const widthPct = Math.max(2, ((p.cpuPct || 0) / max) * 100);
+        return `
+          <div class="proc-row ${hot ? 'hot' : ''}">
+            <div class="bar" style="width:${widthPct}%"></div>
+            <div class="top">
+              <div>
+                <div class="name">${escapeHtml(p.name || '(unknown)')}<span class="pid">pid ${p.pid}</span></div>
+                ${p.cmdLine ? `<div class="meta">${escapeHtml(p.cmdLine)}</div>` : ''}
+              </div>
+              <div class="chip ${hot ? 'hot' : ''}">${fmtPct(p.cpuPct)} · ${fmtMs(p.cpuMSec)}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderOverview() {
+      const topThreads = (perf.top_threads || []).slice(0, 3);
+      const topModules = (perf.module_self_time || []).slice(0, 3);
+      const topFns = (perf.hot_functions || []).slice(0, 5);
+      const items = [];
+      topThreads.forEach(t => items.push(`
+        <div class="list-item">
+          <strong>Thread Hotspot · ${escapeHtml(t.name)}</strong>
+          <div class="small">${fmtPct(t.pct)} of total CPU · top self frames: ${(t.top_self || []).slice(0,3).map(x => escapeHtml(x.frame)).join(', ')}</div>
+        </div>
+      `));
+      topModules.forEach(m => items.push(`
+        <div class="list-item">
+          <strong>Module Self · ${escapeHtml(m.module)}</strong>
+          <div class="small">${fmtMs(m.self_ms)} · ${fmtPct(m.self_pct)} self time</div>
+        </div>
+      `));
+      topFns.slice(0, 3).forEach(f => items.push(`
+        <div class="list-item">
+          <strong>Function · ${escapeHtml(f.frame)}</strong>
+          <div class="small">${fmtMs(f.self_ms)} self · suspect caller ${escapeHtml(f.suspect_caller_module || 'n/a')}</div>
+        </div>
+      `));
+      document.getElementById('overviewList').innerHTML = items.join('');
+    }
+
+    function renderTables() {
+      document.getElementById('moduleSelfTable').innerHTML = (perf.module_self_time || []).slice(0, 15).map(m => `
+        <tr>
+          <td><strong>${escapeHtml(m.module)}</strong></td>
+          <td>${fmtMs(m.self_ms)}</td>
+          <td>${fmtPct(m.self_pct)}</td>
+          <td><div class="pct-bar"><i style="width:${Math.min(m.self_pct, 100)}%"></i></div></td>
+        </tr>
+      `).join('');
+
+      document.getElementById('topFunctionsTable').innerHTML = (perf.hot_functions || []).slice(0, 15).map(f => `
+        <tr>
+          <td class="mono">${escapeHtml(f.function || f.frame)}</td>
+          <td>${escapeHtml(f.module || '')}</td>
+          <td>${fmtMs(f.self_ms)}</td>
+          <td>${fmtPct(f.self_pct)}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('hotFunctionsTable').innerHTML = (perf.hot_functions || []).slice(0, 12).map(f => {
+        const topCaller = (f.top_caller_frames || [])[0];
+        const topChain = (f.top_call_chains || [])[0];
+        return `
+          <tr>
+            <td class="mono"><strong>${escapeHtml(f.frame)}</strong></td>
+            <td>${fmtMs(f.self_ms)}<br><span class="small">${fmtPct(f.self_pct)}</span></td>
+            <td><span class="chip">${escapeHtml(f.suspect_caller_module || 'n/a')}</span></td>
+            <td class="small">
+              ${topCaller ? `<div><strong>Caller:</strong> ${escapeHtml(topCaller.frame)} · ${fmtPct(topCaller.weight_pct)}</div>` : ''}
+              ${topChain ? `<div><strong>Chain:</strong> <span class="mono">${(topChain.chain || []).map(escapeHtml).join(' → ')}</span></div>` : ''}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderSummary() {
+      const findings = summary.findings || [];
+      const actions = summary.actions || [];
+      document.getElementById('summaryFindings').innerHTML = findings.map(f => `
+        <div class="summary-item">
+          <strong>${escapeHtml(f.label)}</strong>
+          <p>${escapeHtml(f.text)}</p>
+        </div>
+      `).join('');
+      document.getElementById('summaryActions').innerHTML = actions.map(a => `<li>${escapeHtml(a)}</li>`).join('');
+    }
+
+    function renderRootCause() {
+      const rc = data.rootCause;
+      const card = document.getElementById('rootCauseCard');
+      if (!rc) { card.style.display = 'none'; return; }
+
+      document.getElementById('rcLead').innerHTML = `
+        <div class="rc-lead">
+          <div class="rc-lead-row">
+            <span class="conf">${escapeHtml(rc.confidence || 'HIGH')}</span>
+            <span class="rc-lead-title">${escapeHtml(rc.title || '')}</span>
+            ${rc.impactPct ? `<span class="impact">${rc.impactPct}% · ${fmtMs(rc.impactMs || 0)}</span>` : ''}
+          </div>
+          <div class="rc-lead-body">${escapeHtml(rc.lead || '')}</div>
+        </div>
+      `;
+
+      const evidence = rc.evidence || [];
+      document.getElementById('rcEvidence').innerHTML = evidence.map(e => `
+        <div class="rc-step">
+          <div class="rc-step-head">
+            <span class="rc-step-num">${e.step}</span>
+            <span class="rc-step-title">${escapeHtml(e.title || '')}</span>
+            <span class="rc-step-loc">${escapeHtml(e.file || '')}${e.lines ? ':' + escapeHtml(e.lines) : ''}</span>
+          </div>
+          <pre>${escapeHtml(e.code || '')}</pre>
+          <div class="obs">${escapeHtml(e.observation || '')}</div>
+        </div>
+      `).join('');
+
+      const fixes = rc.fixes || [];
+      document.getElementById('rcFixes').innerHTML = fixes.map(f => {
+        const p = (f.priority || '').toLowerCase();
+        const cls = p.includes('high') ? 'high' : p.includes('medium') ? 'med' : 'low';
+        return `
+          <div class="rc-fix">
+            <div class="rc-fix-head">
+              <span class="rc-prio ${cls}">${escapeHtml(f.priority || '')}</span>
+              <span class="rc-fix-title">${escapeHtml(f.title || '')}</span>
+              ${f.estGain ? `<span class="rc-fix-gain">${escapeHtml(f.estGain)}</span>` : ''}
+            </div>
+            <div class="rc-fix-body">${escapeHtml(f.body || '')}</div>
+            ${f.verify && f.verify !== '—' ? `<div class="rc-fix-verify"><b>VERIFY</b> ${escapeHtml(f.verify)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      if (rc.scopeNote) {
+        const s = document.getElementById('rcScope');
+        s.style.display = 'block';
+        s.innerHTML = `<b>SCOPE</b> ${escapeHtml(rc.scopeNote)}`;
+      }
+    }
+
+    function setHeroText() {
+      const meta = data.meta || {};
+      const titleEl = document.getElementById('heroTitle');
+      if (meta.title) {
+        titleEl.textContent = meta.title;
+      } else if (meta.speedscope) {
+        const stem = meta.speedscope.replace(/\.speedscope\.json$/i, '');
+        titleEl.textContent = `${stem} · CPU 性能根因分析报告`;
+      }
+
+      const topModule = (perf.module_self_time || [])[0];
+      const topFunction = (perf.hot_functions || [])[0];
+      const total = fmtMs(perf.total_cpu_ms || 0);
+      const rc = data.rootCause;
+      let tail = '';
+      if (rc && rc.title) {
+        tail = ` 根因诊断：${rc.title}（详见下方 Root Cause Diagnosis 卡片）。`;
+      }
+      const modText = topModule ? `${topModule.module}（${fmtPct(topModule.self_pct)} self time）` : 'n/a';
+      const fnText = topFunction ? (topFunction.frame || topFunction.function || 'n/a') : 'n/a';
+      document.getElementById('heroText').textContent =
+        `本次采样总 CPU 时间为 ${total}。主瓶颈集中在 ${modText}，最热单点函数为 ${fnText}。` + tail;
+    }
+
+    // === Speedscope viewer ===============================================
+    const SPEEDSCOPE_APP_URL = 'https://www.speedscope.app/';
+
+    function setupSpeedscopeViewer() {
+      const iframe = document.getElementById('speedscopeFrame');
+      const embeddedFrame = document.getElementById('embeddedFrame');
+      const stateEl = document.getElementById('connState');
+      const cmdHint = document.getElementById('cmdHint');
+      const tabEmbedded = document.getElementById('tabEmbedded');
+      const tabLocal  = document.getElementById('tabLocal');
+      const paneEmbedded = document.getElementById('paneEmbedded');
+      const paneLocal  = document.getElementById('paneLocal');
+      const btnOpenApp = document.getElementById('btnOpenApp');
+      const btnCopyPath = document.getElementById('btnCopyPath');
+      const btnRetry = document.getElementById('btnRetryConn');
+
+      const profileFile = embed.profileFile || 'profile.speedscope.json';
+      const profilePath = embed.profilePath || profileFile;
+      const embeddedHtml = embed.embeddedHtml || 'index-embedded.html';
+      cmdHint.textContent = `node speedscope/server.js ${profileFile}`;
+
+      // Default tab: load the embedded iframe immediately.
+      embeddedFrame.src = `./speedscope/${embeddedHtml}`;
+
+      const tabs = [
+        { btn: tabEmbedded, pane: paneEmbedded, key: 'embedded' },
+        { btn: tabLocal,    pane: paneLocal,    key: 'local' },
+      ];
+      function setTab(key) {
+        tabs.forEach(t => {
+          const on = t.key === key;
+          t.btn.classList.toggle('active', on);
+          t.pane.classList.toggle('active', on);
+        });
+        if (key === 'local') probeLocalServer();
+      }
+      tabs.forEach(t => t.btn.addEventListener('click', () => setTab(t.key)));
+
+      btnOpenApp.addEventListener('click', () => {
+        copyToClipboard(profilePath, btnOpenApp, false);
+        window.open(SPEEDSCOPE_APP_URL, '_blank', 'noopener');
+      });
+      btnCopyPath.addEventListener('click', () => {
+        copyToClipboard(profilePath, btnCopyPath, true);
+      });
+      btnRetry.addEventListener('click', probeLocalServer);
+
+      function copyToClipboard(text, btnEl, showLabelChange) {
+        const original = btnEl.textContent;
+        const done = () => {
+          btnEl.classList.add('copied');
+          if (showLabelChange) btnEl.textContent = '✓ 已复制';
+          setTimeout(() => {
+            btnEl.classList.remove('copied');
+            if (showLabelChange) btnEl.textContent = original;
+          }, 1500);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+        } else {
+          fallbackCopy(text, done);
+        }
+      }
+      function fallbackCopy(text, done) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) { /* ignore */ }
+        document.body.removeChild(ta);
+      }
+
+      let probedOnce = false;
+      function probeLocalServer() {
+        const iframeUrl = `${embed.serverUrl}/${embed.autoHtml}?file=${encodeURIComponent(profileFile)}`;
+        stateEl.innerHTML = `<span>检测中...</span>`;
+        fetch(`${embed.serverUrl}/${embed.autoHtml}`, { mode: 'no-cors' })
+          .then(() => {
+            stateEl.innerHTML = `<span class="ok">✓ 已连接 ${embed.serverUrl}</span>`;
+            iframe.src = iframeUrl;
+            iframe.style.opacity = 1;
+          })
+          .catch(() => {
+            stateEl.innerHTML = `<span class="err">✗ 无法连接到本地服务器，请先在终端执行上面的命令。</span>`;
+            if (!probedOnce) {
+              iframe.src = iframeUrl;
+              iframe.style.opacity = 0.6;
+            }
+          });
+        probedOnce = true;
+      }
+    }
+
+    renderMetrics();
+    renderTopProcesses();
+    renderOverview();
+    renderTables();
+    renderRootCause();
+    renderSummary();
+    setHeroText();
+    setupSpeedscopeViewer();
+  </script>
+</body>
+</html>

@@ -107,6 +107,34 @@ specs:
 - `type: prefix` — Use for prefix matching (e.g., `_mm256_` matches all AVX2 intrinsics)
 - `scope` — Restricts where the pattern is searched (comment lines are always excluded)
 
+### Keep every spec GENERAL (the rule, not the incident)
+
+A spec exists to guide a **whole class** of future ports, not to record what
+happened on one project. Enforce this when writing or extending any spec:
+
+- **`description` states the transferable rule + mechanism** — the x64 construct →
+  the ARM64 construct and *why* (the hardware capability or latency/throughput fact
+  that drives it). A specific project or measured number is allowed only as a
+  one-clause *evidence* citation, never as the rule. Good: "prefer `vcntq_u8` for a
+  per-byte popcount — ARM has hardware popcount, unlike pre-AVX512 x86." Overfit:
+  "sse-popcount runs 12% faster."
+- **`match_rules` fire on the CONSTRUCT, not a codebase** — regex the x86 source
+  pattern (e.g. `_mm_mul_epu32`, `_mm_add_ps`, `_mm_cmpestrm`) and a NEON-output
+  self-check, so the spec surfaces on *any* project using that construct.
+- **Regime-dependent wins state the condition as a decision rule** others can
+  evaluate ("estimate+NR wins *when the reciprocal is the loop bottleneck*"), not a
+  bare verdict.
+- **Do not overfit the magnitude.** Report a measured speedup as an honest
+  direction/range with its governing regime; prefer the mechanism over the number
+  (a hand-run can inflate a speedup by measuring against a strawman baseline). If
+  unsure whether a lesson generalizes, widen it or keep it a candidate in
+  `PERF-PROGRESS.md` — an over-narrow spec that only matches your one test case is
+  nearly worthless to the next port.
+
+(See `arm64-port-orchestrator/SKILL.md` §8.5 Capture stage for the full promotion
+rules — route by kind, verify red→green at the matcher, regenerate the combined
+collection.)
+
 ---
 
 ## 3. Create Mode: `/leaf-skill-creator <name>`
