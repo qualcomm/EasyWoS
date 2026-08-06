@@ -2,8 +2,6 @@
 
 用于将 x86/x64 代码移植到 **Windows on Snapdragon（ARM64 / ARM64EC）** 的专家智能体技能集。
 
-> 本文是 [USAGE.md](USAGE.md) 的中文版本。若两者有出入，以英文版为准。
-
 **EasyWoS 是一套端到端的移植解决方案，而不是若干零散的转换工具。** 它把一个项目从
 *未经分析的 x64 源码*，一路带到*已移植、已验证、已实测的 ARM64 构建*——中间每一个环节
 都是方案的组成部分：
@@ -115,11 +113,24 @@ YAML，不绑定任何特定模型 API。
 
 ## 4. 安装
 
-技能从 Claude Code 的 skills 目录加载。安装本仓库全部技能：
+技能从 Claude Code 的 skills 目录加载。本仓库现在作为子目录挂在 `qualcomm/EasyWoS`
+仓库下的 `agent/`（即 `agent/skills/...`），所以要用带子路径的方式安装。加上
+`--all` 可以把全部技能装到检测到的所有 agent，且不再逐个弹出确认：
 
 ```bash
-npx skills add https://github.com/qualcomm/easywos-skills.git
+npx skills add qualcomm/EasyWoS/agent --all
 ```
+
+等价地，用完整 URL：
+
+```bash
+npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
+```
+
+如果想装全部技能但限定只装到某个 agent（比如只装 Claude Code），用
+`-s "*" -a claude-code -y` 代替 `--all`。注意要用双引号，不要用单引号——
+`cmd.exe` 不会剥掉单引号，`-s '*'` 会把带着引号的字面字符串传给命令，
+匹配不到任何技能。
 
 仓库更新后重新执行，以获取新增/变更的规格。
 

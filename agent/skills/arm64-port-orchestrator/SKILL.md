@@ -307,7 +307,7 @@ Reuse the same install-then-stop policy as `easywos-spec §0`.
 | combined specs | `skills/combined-spec-summary.yaml` | Global spec table |
 | OpenSpec | `openspec/` present in `<project-path>` (or its repo) with `config.yaml` | Change lifecycle |
 
-If any are missing, follow `easywos-spec §0.3`: try `npx skills add https://github.com/qcom-WoSEcosystem/easywos-skills.git`, re-check, and if still missing STOP and list them. Do NOT proceed on a partial toolchain.
+If any are missing, follow `easywos-spec §0.3`: try `npx skills add qualcomm/EasyWoS/agent --all`, re-check, and if still missing STOP and list them. Do NOT proceed on a partial toolchain.
 
 ### 1.2 Toolchain preflight
 

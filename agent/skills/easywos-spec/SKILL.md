@@ -63,7 +63,7 @@ screening, matching, or task generation. Instead:
    skills from the canonical repo:
 
    ```bash
-   npx skills add https://github.com/qcom-WoSEcosystem/easywos-skills.git
+   npx skills add qualcomm/EasyWoS/agent --all
    ```
 
 2. **Re-run the 0.2 check** after installation completes.
@@ -74,7 +74,7 @@ screening, matching, or task generation. Instead:
 
    ```
    Cannot run easywos-spec: the following dependent skills/files were still not
-   found after running `npx skills add https://github.com/qcom-WoSEcosystem/easywos-skills.git`:
+   found after running `npx skills add qualcomm/EasyWoS/agent --all`:
      - skills/dispatcher-skill/SKILL.md
      - skills/sse-avx-to-neon/SKILL.md
 

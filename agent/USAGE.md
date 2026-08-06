@@ -140,12 +140,26 @@ skill content is Markdown and YAML and binds to no particular model API.
 
 ## 4. Install
 
-The skills are loaded from a Claude Code skills directory. Install all skills
-from this repo with:
+The skills are loaded from a Claude Code skills directory. This repo now lives
+as a subdirectory inside the `qualcomm/EasyWoS` repo, at `agent/` (i.e.
+`agent/skills/...`), so install with a subpath pointing at that directory.
+`--all` installs every skill to every detected agent without the per-skill
+confirmation prompts:
 
 ```bash
-npx skills add https://github.com/qualcomm/easywos-skills.git
+npx skills add qualcomm/EasyWoS/agent --all
 ```
+
+Equivalently, with a full URL:
+
+```bash
+npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
+```
+
+To install everything but restrict which agent it's installed to (e.g. only
+Claude Code), use `-s "*" -a claude-code -y` instead of `--all`. Use double
+quotes, not single quotes — `cmd.exe` does not strip single quotes, so `-s '*'`
+is passed through literally and matches no skill.
 
 Re-run after the repo updates to pick up new/changed specs.
 

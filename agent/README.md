@@ -10,6 +10,7 @@ Expert agent skills for porting x86/x64 code to **Windows on Snapdragon** (**ARM
 
 ```text
 skills/
+├── arm64-port-orchestrator/            # Top-level end-to-end loop: scan → port → verify → integrate → build → test → fix → profile → archive
 ├── easywos-spec/                       # EasyWoS scan orchestration and task generation
 ├── dispatcher-skill/                   # Routes matched porting items to leaf skills
 ├── arm64-baseline-porting/             # Baseline ARM64 correctness constraints
@@ -20,18 +21,33 @@ skills/
 ├── enable-windows-arm64/               # Build-system ARM64 enablement guidance
 ├── jit-arm64ec-virtualalloc-fix-skill/ # ARM64EC JIT executable memory guidance
 ├── arm64-porting-report/               # Porting report generation
-└── leaf-skill-creator/                 # Skill/spec scaffolding assistance
+├── leaf-skill-creator/                 # Skill/spec scaffolding assistance
+└── profiling/                          # etl-generator, perf-sampling-parser, perf-optimizer — measure the ported binary
 ```
 
 See [USAGE.md](USAGE.md) for the full workflow, installation instructions, and examples.
 
 ## Installation
 
-Install the skills into a compatible agent skills directory with:
+This repository lives as a subdirectory inside the `qualcomm/EasyWoS` repo, at
+`agent/` (so `agent/skills/...`). Install with a subpath pointing at that
+directory. `--all` installs every skill to every detected agent without the
+per-skill confirmation prompts:
 
 ```bash
-npx skills add https://github.com/qualcomm/easywos-skills.git
+npx skills add qualcomm/EasyWoS/agent --all
 ```
+
+Equivalently, with a full URL:
+
+```bash
+npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
+```
+
+To install everything but restrict which agent it's installed to (e.g. only
+Claude Code), use `-s "*" -a claude-code -y` instead of `--all`. Use double
+quotes, not single quotes — `cmd.exe` does not strip single quotes, so `-s '*'`
+is passed through literally and matches no skill.
 
 Re-run the command after repository updates to pick up new or changed skills.
 
@@ -62,16 +78,24 @@ The repository contains documentation and scripts rather than a single compiled 
 
 ```bash
 node skills/dispatcher-skill/scripts/combine-specs.js
-node skills/easywos-spec/scripts/setup.js
 ```
+
+`skills/easywos-spec/scripts/setup.js` checks OpenSpec integration prerequisites
+(`openspec/config.yaml`, a project-local spec collection) that only exist once
+this repo is installed into a *consuming* project — running it here, standalone,
+correctly reports those as missing.
 
 Some scripts have their own package dependencies. For example:
 
 ```bash
 cd skills/easywos-spec/scripts
 npm install
-npm test
+node spec_matcher.decompose.test.js
 ```
+
+> `spec_matcher.test.js` in the same directory currently fails to run — it hardcodes
+> a spec-collection path under a nonexistent `openspec/changes/...` directory. It
+> needs a path fix before it can be used for validation.
 
 ## Contributing
 
