@@ -8,6 +8,10 @@ Expert agent skills for porting x86/x64 code to **Windows on Snapdragon** (**ARM
 
 ## What this repository contains
 
+Each subdirectory under `skills/` is one skill; its directory name is the skill's
+invocation name and it contains a `SKILL.md` (plus optional `scripts/`,
+`references/`, `assets/`).
+
 ```text
 skills/
 ├── arm64-port-orchestrator/            # Top-level end-to-end loop: scan → port → verify → integrate → build → test → fix → profile → archive
@@ -22,7 +26,9 @@ skills/
 ├── jit-arm64ec-virtualalloc-fix-skill/ # ARM64EC JIT executable memory guidance
 ├── arm64-porting-report/               # Porting report generation
 ├── leaf-skill-creator/                 # Skill/spec scaffolding assistance
-└── profiling/                          # etl-generator, perf-sampling-parser, perf-optimizer — measure the ported binary
+├── etl-generator/                      # Profiling: capture an ETL CPU trace of the ported binary
+├── perf-sampling-parser/               # Profiling: per-process CPU usage → SpeedScope flame graph
+└── perf-optimizer/                     # Profiling: flame-graph root-cause + optimization guidance
 ```
 
 See [USAGE.md](USAGE.md) for the full workflow, installation instructions, and examples.

@@ -1,6 +1,6 @@
 export const meta = {
   name: 'arm64-perf-optimize-loop-driver',
-  description: 'Deterministic skeleton for the POST-PORT performance loop: profile the ARM64 build with the profiling skills, decide (in code) whether a hotspot is worth optimizing, hand ONE hotspot to a bounded optimizer agent, independently verify BOTH correctness (negative-control) and a real speedup, re-profile — until no significant hotspot remains, a stall, or the iteration cap. On each accepted optimization, capture the lesson back into the leaf skill tree. Generic: all facts come from args.',
+  description: 'Deterministic skeleton for the POST-PORT performance loop: profile the ARM64 build with the profiling skills, decide (in code) whether a hotspot is worth optimizing, hand ONE hotspot to a bounded optimizer agent, independently verify BOTH correctness (negative-control) and a real speedup, re-profile — until no significant hotspot remains, admin elevation is required, a stall occurs, or the iteration cap is hit. On each accepted optimization, capture the lesson back into the leaf skill tree. Generic: all facts come from args.',
   phases: [
     { title: 'Profile', detail: 'run etl-generator -> perf-sampling-parser -> perf-optimizer; rank hotspots' },
     { title: 'Optimize', detail: 'one optimizer agent per top hotspot, inside a bounded box (task-layer decision)' },
@@ -40,7 +40,20 @@ export const meta = {
 // }
 // Accept args as an object (normal path) or a JSON string (some invocation
 // paths deliver it stringified); parse defensively so the driver is robust.
-let A = args || {}
+// ---- HARNESS RUNTIME NOTE (read before "just run this on Codex") ----------
+// This file is a Claude Code **Workflow scriptlet**, NOT a standalone Node CLI.
+// It depends on runtime primitives the Workflow tool injects into scope:
+// `args` (parameters), `agent(...)` (spawn a bounded sub-agent with a validated
+// result), `parallel(...)`, `log(...)`, `phase(...)`, and top-level `await`.
+// Plain `node perf-optimize-loop-driver.js` will NOT run it. On **Codex** (or any
+// harness without the Workflow runtime) do NOT try to execute this file; instead
+// **enact the same deterministic algorithm** — profile → pick the top actionable
+// hotspot → optimize (bounded) → independently verify correctness + speedup →
+// capture the lesson → re-profile, with the CONVERGED/PAUSED_NEEDS_ADMIN/STALL
+// exit owned by the control flow — using the harness's own tools. The authoritative, harness-neutral
+// spec is `../references/perf-optimize-loop.md`. What must not change across
+// harnesses is the CONTROL FLOW, not the mechanism.
+let A = (typeof args !== 'undefined' && args) ? args : {}
 if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 const PROJECT = A.projectPath
 const RUN_TARGET = A.runTarget
@@ -125,7 +138,8 @@ const VERDICT_SCHEMA = {
 function hotSig(h) { return `${(h.module || '')}|${(h.func || h.frame || '')}` }
 
 // ============================================================
-// PERF LOOP — deterministic. Every path ends in CONVERGED or STALL(reason).
+// PERF LOOP — deterministic. Every path ends in CONVERGED,
+// PAUSED_NEEDS_ADMIN, or STALL(reason).
 // CONVERGED here = "no hotspot above the threshold remains" (the STOP CONDITION),
 // NOT "we ran out of iterations".
 // ============================================================
@@ -145,14 +159,14 @@ for (let iter = 1; iter <= MAX_ITERS; iter++) {
   phase('Profile')
   const prof = await agent(
     `Profile the ARM64 build and rank its CPU hotspots. Bash shell available. Working dir: ${PROJECT}.
-Use the profiling skills under ${SKILLS}/profiling (do NOT use xperf/WPA):
+Use the profiling skills (etl-generator / perf-sampling-parser / perf-optimizer) under ${SKILLS} (do NOT use xperf/WPA):
 
-1. Capture a trace of the target running its workload (REQUIRES an elevated shell; if not elevated, report ranSuccessfully=false with a clear reason):
-     python "${SKILLS}/profiling/etl-generator/scripts/collect_etl.py" "${RUN_TARGET}" ${RUN_ARGS ? `--args ${JSON.stringify(RUN_ARGS)}` : ''}
+1. Capture a trace of the target running its workload (REQUIRES an elevated shell; if not elevated, report ranSuccessfully=false and set note to "PAUSED_NEEDS_ADMIN: restart the agent harness from an Administrator terminal and resume from perf"):
+     python "${SKILLS}/etl-generator/scripts/collect_etl.py" "${RUN_TARGET}" ${RUN_ARGS ? `--args ${JSON.stringify(RUN_ARGS)}` : ''}
 2. Export a SpeedScope flame graph for the target process:
      process_tree.py -> parse_processtree.py (find the target process) -> etl_to_speedscope.py "<name>"
 3. Attribute hotspots:
-     python "${SKILLS}/profiling/perf-optimizer/scripts/analyze_speedscope.py" "<name>.speedscope.json" --top-n 15
+     python "${SKILLS}/perf-optimizer/scripts/analyze_speedscope.py" "<name>.speedscope.json" --top-n 15
 
 Report the top hot leaves by self% from the perf_report.json hot_functions. For each, include perf-optimizer's suspect_caller_module. ${MATCHED ? `Map the suspect module to a porting_item id using ${MATCHED} and set kernelId when it corresponds to a ported kernel.` : ''}
 Do NOT optimize anything — only profile, rank, and report.`,
@@ -160,7 +174,11 @@ Do NOT optimize anything — only profile, rank, and report.`,
   )
 
   if (!prof || !prof.ranSuccessfully) {
-    outcome = { status: 'STALL', reason: `profiling did not complete on iteration ${iter}${prof ? ': ' + (prof.hotspots ? 'no report' : 'ranSuccessfully=false') : ' (agent returned nothing)'}` }
+    const note = (prof && prof.note ? String(prof.note) : '').toLowerCase()
+    const needsAdmin = /paused_needs_admin|administrator|not elevated|elevated shell|privilege/.test(note)
+    outcome = needsAdmin
+      ? { status: 'PAUSED_NEEDS_ADMIN', reason: `profiling requires an Administrator/elevated shell; restart the agent harness from an elevated terminal and resume from perf` }
+      : { status: 'STALL', reason: `profiling did not complete on iteration ${iter}${prof ? ': ' + (prof.hotspots ? 'no report' : 'ranSuccessfully=false') : ' (agent returned nothing)'}` }
     history.push({ iter, event: 'profile-failed', detail: prof && prof.totalCpuMs })
     break
   }
@@ -273,7 +291,7 @@ Do BOTH, defaulting every judgement to false when unsure:
 (1) CORRECTNESS — mandatory negative control. Build and run the code's own correctness check (the scalar-vs-optimized comparison). Then PERTURB the optimized path (or its reference) so the result MUST diverge, rebuild, and confirm the check reports FAIL / non-zero. Revert and confirm it passes. If it stays green under perturbation, the check is not wired — correct=false.
     Rebuild command: ${BUILD_CMD}
 
-(2) SPEEDUP — measure it yourself. Re-profile with ${SKILLS}/profiling (or time the hotspot workload) and compare the hotspot's self-CPU / the workload's per-unit CPU before vs after. faster=true ONLY if it dropped by at least ${MIN_SPEEDUP}%. Report measuredSpeedupPct. Do NOT trust the optimizer's claim; do NOT accept a speedup obtained by shrinking the workload or loosening tolerance.
+(2) SPEEDUP — measure it yourself. Re-profile with ${SKILLS}the profiling skills under  (or time the hotspot workload) and compare the hotspot's self-CPU / the workload's per-unit CPU before vs after. faster=true ONLY if it dropped by at least ${MIN_SPEEDUP}%. Report measuredSpeedupPct. Do NOT trust the optimizer's claim; do NOT accept a speedup obtained by shrinking the workload or loosening tolerance.
 
 Return a verdict. Being wrong here is worse than being skeptical.`,
     { label: `verify:${(target.func || target.frame).split(/[!:]/).pop()}#${iter}`, phase: 'Verify', schema: VERDICT_SCHEMA }
@@ -364,7 +382,7 @@ This file is read by the archive gate and the final report; be concise and faith
 }
 
 return {
-  status: outcome.status,                    // CONVERGED (stop condition met) | STALL (reason)
+  status: outcome.status,                    // CONVERGED | PAUSED_NEEDS_ADMIN | STALL
   reason: outcome.reason || null,
   iterations: history.length,
   acceptedOptimizations: accepted,           // correct + measurably faster, with technique + speedup

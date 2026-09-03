@@ -27,7 +27,22 @@ export const meta = {
 //   innerRetryK?:  number   // default 3  (per-kernel budget, shared with easywos-spec §8)
 //   staleStop?:    number   // default 2  (consecutive identical-signature rounds -> STALL)
 // }
-const A = args || {}
+// ---- HARNESS RUNTIME NOTE (read before "just run this on Codex") ----------
+// This file is a Claude Code **Workflow scriptlet**, NOT a standalone Node CLI.
+// It depends on runtime primitives the Workflow tool injects into scope:
+//   • `args`      — the parameters object (contract below)
+//   • `agent(...)`— spawn a bounded sub-agent and get a schema-validated result
+//   • `parallel(...)`, `log(...)`, `phase(...)`, and top-level `await`
+// Plain `node outer-loop-driver.js` will therefore NOT run it (no `agent`, no
+// `args`). On **Codex** (or any harness without the Workflow runtime) do NOT try
+// to execute this file; instead **enact the same deterministic algorithm** it
+// encodes — the loop control, failure classification, per-file fixer routing,
+// independent verification, retry budget, and CONVERGED/STALL exit — using the
+// harness's own tools (run build/test, edit files, re-dispatch via dispatcher-
+// skill). The authoritative, harness-neutral spec of that algorithm is
+// `../references/outer-loop.md`. The point that must not change across harnesses
+// is the CONTROL FLOW (code owns "loop again vs stop"), not the mechanism.
+const A = (typeof args !== 'undefined' && args) ? args : {}
 const PROJECT = A.projectPath
 const BUILD_CMD = A.buildCmd
 const TEST_CMD = A.testCmd

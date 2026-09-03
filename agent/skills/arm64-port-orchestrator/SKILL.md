@@ -258,6 +258,14 @@ learned from is in
 
 ## 0. Invocation & Arguments
 
+**Harness compatibility.** The `/arm64-port-orchestrator …` form below is the
+Claude Code slash-command shorthand. This skill is harness-agnostic: on **Codex**
+(and any harness without slash-command skills) there is no `/command` — invoke it
+by describing the task in natural language and passing the same arguments, e.g.
+*"Use the arm64-port-orchestrator skill to port `<project-path>` to ARM64, build
+cmd `<...>`, autonomy hands-off."* The options table applies identically; only
+the surface syntax differs. Do not assume a slash-command runtime exists.
+
 ```
 /arm64-port-orchestrator <project-path> [options]
 ```
@@ -271,7 +279,7 @@ learned from is in
 | `--target arm64-windows \| arm64-linux` | No | `arm64-windows` | Toolchain family for build/test. |
 | `--max-outer-iters N` | No | `12` | Cap on the outer build→fix loop (§8). |
 | `--inner-retry-K N` | No | `3` | Per-kernel retry budget handed to easywos-spec §8 / dispatcher. |
-| `--profile` / `--no-profile` | No | `--profile` | Run (or skip) the post-port performance loop (§8.5). Skipped automatically if no runnable workload is resolvable or the host is not elevated. |
+| `--profile` / `--no-profile` | No | `--profile` | Run (or skip) the post-port performance loop (§8.5). Only `--no-profile` or no runnable terminating workload may skip profiling; a non-elevated host pauses the run before profiling and does not archive. |
 | `--run-workload "<args>"` | No | — | A terminating workload for the profiled target (§8.5). If absent, §8.5 tries the project's own bench target, else STALLs with that reason. |
 | `--perf-hot-pct N` | No | `10` | Stop threshold for §8.5: a hot leaf below this %CPU self-time is not worth optimizing (the CONVERGED signal). |
 | `--perf-max-iters N` | No | `6` | Cap on the §8.5 profile→optimize→verify loop. |
@@ -284,6 +292,26 @@ learned from is in
 recording the phase reached, the matched-YAML path, the build/test commands, and
 the outer-loop history. It is the resume anchor for `--resume-from` and the
 audit trail; update it at every phase boundary.
+
+### 0.1 Harness compatibility — subagents, OpenSpec, and parallelism (READ before running on Codex)
+
+This skill's prose uses several **Claude Code** primitives. They all have a
+**Codex** (or generic-harness) equivalent — the pipeline is harness-agnostic, only
+the mechanism differs. Translate as follows and never let a missing Claude
+primitive stop the run:
+
+| Claude Code term used below | What it means | Codex / generic equivalent |
+|---|---|---|
+| **"Spawn a subagent"** (as a leaf skill / fixer / verifier) | delegate a bounded task to a fresh agent context | Codex has no `Task`-tool subagent. Either **do the step in-context** by loading the relevant leaf skill's SKILL.md and following it, or use Codex's own delegation/agent mechanism if configured. The requirement is only that the *port/fix is produced by following the leaf skill's spec-driven guidance*, not that a separate agent process exists. |
+| **`Workflow({scriptPath,args})`** | run a deterministic driver **scriptlet** in the Workflow runtime (it relies on injected `args`/`agent`/`parallel`/`log`/`phase` + top-level await) | Codex has no Workflow runtime, so the driver files are **not** runnable with plain `node`. Instead **enact the same deterministic algorithm** they encode — the spec is in `references/outer-loop.md` / `references/perf-optimize-loop.md` — using Codex's own tools. The control flow (code owns "loop again vs stop") is what must be preserved (see §7.2). |
+| **OpenSpec `opsx:propose` / `opsx:apply` / `opsx:archive`** (skills `openspec-propose` / `openspec-apply-change` / `openspec-archive-change`) | Claude Code slash/skill wrappers around OpenSpec | Use the **OpenSpec CLI** directly: `openspec propose`, `openspec apply`, `openspec archive` (or your harness's OpenSpec integration). OpenSpec is optional — see the demo-without-openspec path in `easywos-spec`. |
+| **"fan out … one fixer agent per file, in parallel"** | independent files fixed concurrently | Parallelism is an optimization, not a requirement. On a harness without parallel subagents, process the independent fixes **sequentially** — the deterministic driver's per-file grouping and retry counting are unchanged; only wall-clock differs. Never let two edits touch the same file concurrently regardless. |
+| **`Read` / `Write` / `Edit` / `Grep` tool names** | file/search operations | Use whatever equivalent file-read/write/search tools the current harness provides; the operations are generic. |
+
+The invariant across harnesses: **the port is produced by the spec-driven flow
+(matcher → dispatcher → leaf skills), the loop is driven by the deterministic
+scripts, and every fix is independently verified.** How you spawn work or invoke
+OpenSpec is harness-specific; that discipline is not.
 
 ---
 
@@ -302,12 +330,16 @@ Reuse the same install-then-stop policy as `easywos-spec §0`.
 | `enable-windows-arm64` | `skills/enable-windows-arm64/SKILL.md` | Generic build-system detect/enable (§6, §7.1) |
 | `arm64-baseline-porting` | `skills/arm64-baseline-porting/SKILL.md` | Freeform / fallback constraints |
 | leaf skills | `skills/{asm-x64-to-arm64,sse-avx-to-neon,intrinsics-x64-to-arm64,arm64-inlineasm-to-intrinsics}/` | Migration execution |
-| profiling skills | `skills/profiling/{etl-generator,perf-sampling-parser,perf-optimizer}/` | Post-port CPU profiling + root-cause (§8.5) |
+| profiling skills | `skills/{etl-generator,perf-sampling-parser,perf-optimizer}/` | Post-port CPU profiling + root-cause (§8.5) |
 | `leaf-skill-creator` | `skills/leaf-skill-creator/SKILL.md` | Capture a verified optimization back into a leaf spec (§8.5) |
 | combined specs | `skills/combined-spec-summary.yaml` | Global spec table |
 | OpenSpec | `openspec/` present in `<project-path>` (or its repo) with `config.yaml` | Change lifecycle |
 
-If any are missing, follow `easywos-spec §0.3`: try `npx skills add qualcomm/EasyWoS/agent --all`, re-check, and if still missing STOP and list them. Do NOT proceed on a partial toolchain.
+If any are missing, follow `easywos-spec §0.3`: regenerate
+`skills/combined-spec-summary.yaml` when that is the only missing generated
+file; otherwise report the missing dependencies and ask before running
+`npx skills add qualcomm/EasyWoS/agent --all`. Do NOT proceed on a partial
+toolchain.
 
 ### 1.2 Toolchain preflight
 
@@ -352,7 +384,8 @@ Produce the EasyWoS input the rest of the pipeline consumes.
 
 Create the change that will carry the port.
 
-1. Run the OpenSpec propose flow (skill `openspec-propose` / `opsx:propose`) to
+1. Run the OpenSpec propose flow (Claude Code: skill `openspec-propose` /
+   `opsx:propose`; **Codex/generic: `openspec propose` CLI — see §0.1**) to
    create `openspec/changes/<change-name>/` with `proposal.md`, `design.md`, and
    a `tasks.md` placeholder. The proposal's scope is "port <project> to ARM64:
    migrate the N scanned porting_items, integrate into the real build, and pass
@@ -389,7 +422,8 @@ from §2. It will:
 
 ## 5. OpenSpec Apply — Port + Inner Verify/Retry Loop
 
-Run the OpenSpec apply flow (skill `openspec-apply-change` / `opsx:apply`) to
+Run the OpenSpec apply flow (Claude Code: skill `openspec-apply-change` /
+`opsx:apply`; **Codex/generic: `openspec apply` CLI — see §0.1**) to
 work through `tasks.md`. This executes, per item:
 
 - `/dispatcher-skill <id> --specs … --source <matched-yaml>` → leaf skill emits
@@ -407,7 +441,9 @@ work through `tasks.md`. This executes, per item:
 > rather than an artifact of your own coding. If you skip the dispatcher and write
 > the kernel yourself, the entire "spec-driven → profile → fix-the-spec" loop is
 > invalidated. Spawn a subagent to act as the leaf skill if the dispatcher cannot
-> run directly, feed it ONLY the matched specs (not your own solution), and treat
+> run directly (**on Codex, which has no subagent, do this step in-context by
+> loading the leaf skill's SKILL.md and following it — see §0.1**), feed it ONLY
+> the matched specs (not your own solution), and treat
 > its output as the port. Never hand-fill `port_spec_ids` — they come from the
 > matcher (§4). If a hand port is unavoidable, mark the item and report it as a
 > skipped/unverified spec-driven step; do not pass it off as spec-driven.
@@ -507,6 +543,20 @@ conversation — that reintroduces exactly the "LLM decides whether to continue"
 failure mode the driver exists to remove. The driver returns
 `{ status: CONVERGED | STALL, reason, iterations, finalTests, needsReview, history, progressLog }`.
 
+> **Harness compatibility (driver invocation).** `Workflow({ scriptPath, args })`
+> above is the Claude Code tool form. The driver files are **Workflow scriptlets**,
+> not standalone Node CLIs — they rely on runtime primitives the Workflow tool
+> injects (`args`, `agent(...)`, `parallel(...)`, `log`, `phase`, top-level await),
+> so `node …/outer-loop-driver.js` will NOT run them. On **Codex** (or any harness
+> without the Workflow runtime), do **not** try to execute the driver file; instead
+> **enact the same deterministic algorithm** it encodes — build/test → classify →
+> per-file fix → independent verify → retry-budget → CONVERGED/STALL — using
+> Codex's own tools, following the harness-neutral spec in
+> [references/outer-loop.md](references/outer-loop.md) (and
+> [references/perf-optimize-loop.md](references/perf-optimize-loop.md) for §8.5).
+> What must not change across harnesses is the **control flow** (code/algorithm
+> owns "loop again vs stop"), not the mechanism used to run it.
+
 ---
 
 ## 8. Auto-Fix Loop Internals (what the driver does each iteration)
@@ -571,10 +621,13 @@ state — every code path returns one of the two.
 ## 8.5 Post-Port Performance Loop (profile → optimize → verify → capture)
 
 Runs **after** §8 reaches CONVERGED (the whole project builds and passes its own
-tests on ARM64) and **before** §9 archive. Skipped when `--no-profile` is given,
-when no runnable terminating workload can be resolved, or when the host is not
-elevated (kernel CPU sampling requires it) — in those cases record why and go to
-§9.
+tests on ARM64) and **before** §9 archive. Skipped only when `--no-profile` is
+given or when no runnable terminating workload can be resolved. If profiling is
+enabled and the current agent harness (Codex, Claude Code, etc.) or terminal is
+not elevated, stop at this phase: record the resume point and tell the user to
+restart the harness from an Administrator terminal, then resume from `--resume-from
+perf` with the same project/workload arguments. Do not run profiling,
+optimization, lesson capture, or archive from the non-elevated session.
 
 **Why it exists.** A port can pass every correctness gate and still be *slow* —
 the classic case is an x64 SIMD kernel that was ported to a **scalar fallback**
@@ -705,12 +758,18 @@ lesson is only merged into the shared skill tree when it is confirmed on a
   (default 10%). This is the real stop condition: the top of the profile is now
   the optimized kernel doing genuine irreducible work, not a scalar-fallback
   artifact → proceed to §9.
-- **`STALL(reason)`** — profiling could not run (e.g. not elevated), the cap was
-  hit with an actionable hotspot still present, no optimization could be applied,
-  or the **same hotspot survives `staleStop`+1 rounds with no accepted speedup**.
-  Do **not** treat perf as done; report the surviving hotspot and the most likely
-  next action. A STALL here does **not** block archive (§9) — correctness already
-  passed §8 — but it is surfaced prominently in the final report.
+- **`PAUSED_NEEDS_ADMIN`** — profiling is enabled but the current harness or
+  terminal is not elevated. This blocks §9 archive. Record the resume command and
+  tell the user to open PowerShell or Command Prompt with **Run as administrator**,
+  start the same agent harness (`codex`, `claude`, etc.) from that elevated
+  terminal, and resume with `--resume-from perf` plus the same project/workload
+  arguments.
+- **`STALL(reason)`** — profiling ran, but the cap was hit with an actionable
+  hotspot still present, no optimization could be applied, or the **same hotspot
+  survives `staleStop`+1 rounds with no accepted speedup**. Do **not** treat perf
+  as done; report the surviving hotspot and the most likely next action. A STALL
+  after profiling has actually run does **not** block archive (§9) — correctness
+  already passed §8 — but it is surfaced prominently in the final report.
 
 The driver returns `{ status, reason, iterations, acceptedOptimizations,
 lessonsCaptured, finalTotalCpuMs, history, progressLog }`; cross-round state is in
@@ -720,20 +779,22 @@ lessonsCaptured, finalTotalCpuMs, history, progressLog }`; cross-round state is 
 
 ## 9. OpenSpec Archive (only on verified green)
 
-Only when §8 converged **and** the negative-control evidence exists:
+Only when §8 converged **and** the negative-control evidence exists, and no
+profiling step is paused for Administrator privileges:
 
 1. **Checkpoint gate (§1.3):** present the final tally — whole-project build
    status, the project's own test/bench pass count, list of `[NEEDS REVIEW]`
    kernels (if any), the negative-control record, and (if §8.5 ran) the
    performance result: accepted optimizations with measured speedups, any
    lessons captured into leaf skills, and any perf STALL.
-2. Run the OpenSpec archive flow (skill `openspec-archive-change` /
-   `opsx:archive`) to finalize the change.
+2. Run the OpenSpec archive flow (Claude Code: skill `openspec-archive-change` /
+   `opsx:archive`; **Codex/generic: `openspec archive` CLI — see §0.1**) to
+   finalize the change.
 3. Write the final state file entry.
 
 Never archive a change with a red or unverified suite, an unresolved
-`[NEEDS REVIEW]` kernel that the project tests actually exercise, or a build that
-does not fully link. Report and stop instead.
+`[NEEDS REVIEW]` kernel that the project tests actually exercise, a build that
+does not fully link, or `PAUSED_NEEDS_ADMIN` from §8.5. Report and stop instead.
 
 ---
 

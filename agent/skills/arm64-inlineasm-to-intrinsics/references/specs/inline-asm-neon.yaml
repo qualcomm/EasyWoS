@@ -87,3 +87,37 @@ specs:
     validation_criteria:
       - "Every quoted mnemonic maps to a NEON intrinsic with matching signedness/lane width"
       - "pmull LOW form split on _MSC_VER; HIGH form vmull_high_p64 shared"
+
+  - id: 3
+    name: arm64-msvc-aes-round-codegen-traps
+    category: msvc-codegen-performance
+    description: >
+      An inline-asm AES/GHASH kernel (aese/aesd/aesmc/aesimc round mnemonics)
+      being translated to MSVC ARM64 intrinsics. A byte-correct translation can
+      still run ~2x slower than the armasm64 assembly it replaces due to three
+      MSVC-specific codegen traps: a runtime round-count loop that prevents
+      unrolling, wide multi-block state passed as an array (spills to memory
+      instead of staying in vector registers), and an inline hint MSVC
+      declines once the helper body grows. All three are invisible in the C
+      source and only surface via disassembly.
+    metadata:
+      match_rules:
+        - pattern: "\\b(?:aese|aesd|aesmc|aesimc)\\b"
+          type: regex
+          scope: inline_asm
+          description: AES round mnemonic (encrypt/decrypt/mix-columns) — signals an AES/GHASH kernel where these codegen traps apply
+    x64_constructs:
+      - "N/A - AArch64 AES crypto mnemonics, not x86"
+    arm64_constructs:
+      - "switch(nr) { case 10/12/14: <unrolled body> } instead of a for-loop over a runtime round count"
+      - "named locals (s0..s7, token-pasted) instead of an array/pointer parameter for multi-block wide state"
+      - "static __forceinline on any AES round helper meant to disappear into the caller"
+    pitfalls:
+      - "for (i=0; i<nr-1; i++) with nr a runtime parameter blocks unrolling: MSVC emits ~3 scalar bookkeeping ops per 2 aese/aesmc. Measured 2732->5913 MB/s (2.16x) fixed-width after switching to a switch(nr) dispatch over compile-time-constant round counts (AES has only 10/12/14)."
+      - "uint8x16_t s[8] (array/pointer parameter) keeps wide state in MEMORY on MSVC even when the whole point of the wide path is register residency. Measured 42 load/stores for 63 AES ops, no speedup over 1-wide, until state moved to named locals (s0..s7 via token-pasting macros). Depth sweep 2503/3540/4310/8024 MB/s at 1/2/4/8 blocks once fixed."
+      - "WC_INLINE / inline is only a hint: once a round helper held 3 unrolled bodies, MSVC declined it and emitted bl <helper> per block. Use static __forceinline; verify by disassembling the caller and grepping for a stray bl."
+    validation_criteria:
+      - "Disassembly (dumpbin -disasm:nobytes or equivalent) shows the round count dispatched via switch/compile-time constant, not a runtime loop"
+      - "Disassembly shows N distinct vector-register destinations for the round op at width N (state in registers, not memory) with load/store count proportional to N, not inflated by spilling"
+      - "No stray call/branch to a round helper inside the hot loop (helper was actually inlined)"
+      - "Measured against the real hand-written assembly fallback (not just correctness-verified) per the orchestrator's Verification & Measurement Discipline"

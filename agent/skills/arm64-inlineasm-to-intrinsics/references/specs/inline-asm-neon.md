@@ -103,3 +103,73 @@ crypto unconditionally on ARM64, so no flag is needed there.
 **Operand/clobber lifting.** Turn each `"+r"/"=r"/"r"` operand into an explicit
 function parameter, and treat `"memory"` + post-index addressing as a signal to
 preserve pointer advancement in the intrinsics.
+
+## arm64-msvc-aes-round-codegen-traps
+
+**What it is.** Three MSVC ARM64 intrinsics codegen behaviors that leave a
+byte-correct AES/GHASH translation silently ~2x slower than the armasm64
+assembly it replaces. None is visible from reading the intrinsics source —
+only from disassembly (`dumpbin -disasm:nobytes`) — and all three showed up
+while matching wolfSSL's hand-written ARM64 crypto assembly under MSVC.
+
+1. **A runtime round count blocks unrolling.** `for (i = 0; i < nr - 1; i++)`
+   with `nr` a function parameter (10/12/14 AES rounds) compiles to a REAL
+   loop: MSVC emits ~3 scalar bookkeeping ops (`sub`/`add`/`cbnz`) for every 2
+   `aese`/`aesmc` instructions, because the trip count is not known at compile
+   time. AES has exactly 3 valid round counts — dispatch on them:
+
+   ```c
+   // SLOW: nr is a runtime parameter, loop cannot be unrolled
+   for (i = 0; i < nr - 1; i++) { s = vaeseq_u8(s, rk[i]); s = vaesmcq_u8(s); }
+
+   // FAST: switch to compile-time-constant round counts, each body unrolled
+   switch (nr) {
+     case 10: AES_ENC_BODY_10(s); break;
+     case 12: AES_ENC_BODY_12(s); break;
+     case 14: AES_ENC_BODY_14(s); break;
+   }
+   ```
+
+   **Measured** (fixed 1-block width, isolating this change alone):
+   2732 → 5913 MB/s (**2.16x**).
+
+2. **Wide state passed as an array stays in memory.** `f(uint8x16_t s[8])`
+   is a pointer parameter; MSVC keeps the 8 blocks in memory rather than
+   registers even though the whole point of the 8-wide path is to keep them
+   live in vector registers. Disassembly showed 42 load/stores for 63 AES
+   instructions, and the "wide" path ran no faster than the 1-wide path. Fix:
+   **named locals**, not an array — token-pasting macros that declare
+   `s0..s7` as separate `uint8x16_t` locals:
+
+   ```c
+   #define AES_X8_DECL(s)  uint8x16_t s##0, s##1, s##2, s##3, s##4, s##5, s##6, s##7
+   #define AES_ENC_R8(s, r) do { \
+       s##0 = vaeseq_u8(s##0, AES_RK(r)); s##0 = vaesmcq_u8(s##0); \
+       /* ... s1..s7 identically ... */ \
+   } while (0)
+   ```
+
+   **Measured** (depth sweep at fixed instruction mix, 1/2/4/8 blocks):
+   2503 / 3540 / 4310 / 8024 MB/s — the 8-wide path only pays off once state is
+   in named locals; disassembly then showed 8 distinct `aese` destination
+   registers (state really lives in registers, not memory).
+
+3. **`WC_INLINE`/`inline` is a hint MSVC can decline.** Once a helper held
+   three unrolled round bodies (10/12/14), MSVC stopped inlining it and
+   emitted `bl <helper>` per block, adding a call per block to a hot loop.
+   Fix: `static __forceinline` on any helper meant to disappear into the
+   caller. Verify by disassembling the caller and grepping for a stray `bl`
+   to the helper — do not assume a project's inline macro was honored.
+
+**End-to-end result**, all three fixes applied and measured against wolfSSL's
+own hand-written armasm64 assembly (interleaved, checksum-matched, cooled-down
+per the orchestrator's thermal-throttling rule): AES-ECB went from **1.97x
+slower** than the assembly to **1.012x** — effectively parity, from three
+compiler-codegen fixes with zero algorithmic change.
+
+**Verification habit that catches these.** Disassemble the candidate
+(`dumpbin -disasm:nobytes` on MSVC, or the equivalent for the target
+toolchain) and count the kernel's core op (`aese`/`aesmc`, or equivalent)
+against `ldr`/`str`, and check how many distinct vector-register destinations
+appear for that op — if it's fewer than the intended width, state is not
+actually staying in registers, regardless of what the C source implies.

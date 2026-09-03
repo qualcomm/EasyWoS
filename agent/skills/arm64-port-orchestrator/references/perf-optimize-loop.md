@@ -24,7 +24,13 @@ engineering"):
 - **① Orchestration decision** — *profile, is this hotspot worth fixing, loop
   again, or stop?* — is **deterministic code** in
   [assets/perf-optimize-loop-driver.js](../assets/perf-optimize-loop-driver.js),
-  run via the Workflow tool. The **stop condition is owned by this code**, read
+  run via the Workflow tool (Claude Code). The driver is a **Workflow scriptlet**
+  (it relies on injected `args`/`agent`/`parallel`/`log`/`phase` + top-level
+  await), **not** a standalone Node CLI — `node perf-optimize-loop-driver.js` will
+  not run it. On **Codex or any harness without the Workflow runtime, do not
+  execute the driver file; enact the algorithm THIS document specifies using the
+  harness's own tools** (see SKILL.md §0.1 / §8.5.1). The **stop
+  condition is owned by this code/algorithm**, read
   from the objective profile numbers, never left to an agent's opinion.
 - **② Task decision** — *how do I optimize this one hotspot* — is delegated to a
   bounded optimizer agent (one hotspot, its owning source only, a leaf-skill
@@ -43,7 +49,7 @@ loop repeats until the stop condition holds.
 
 ## The stop condition (owned by the driver, from the numbers)
 
-The driver terminates with exactly one of two outcomes — it never hangs and
+The driver terminates with exactly one of three outcomes — it never hangs and
 never leaves "are we done?" to an agent:
 
 - **CONVERGED** — **no hot leaf remains at or above `hotThresholdPct` self-CPU
@@ -51,12 +57,16 @@ never leaves "are we done?" to an agent:
   signal. The residual top-of-profile is then the optimized kernel itself doing
   genuine, irreducible work (e.g. `process_frames` after vectorization), not a
   scalar-fallback artifact.
-- **STALL(reason)** — profiling could not run (e.g. not elevated), the iteration
-  cap (`maxIters`, default 6) was hit with an actionable hotspot still present,
-  no optimization could be applied to the top hotspot, or the **same hotspot
-  survives `staleStop`+1 rounds with no accepted speedup** (the no-progress
-  guard). A STALL is reported, not archived; the surviving hotspot and the most
-  likely next action are handed to a human.
+- **PAUSED_NEEDS_ADMIN** — profiling is enabled but the current agent harness or
+  terminal is not elevated. Kernel CPU sampling cannot run. Stop before
+  profiling-dependent work, do not archive, and tell the user to restart Codex,
+  Claude Code, or the current terminal as Administrator and resume from the perf
+  phase with the same project/workload arguments.
+- **STALL(reason)** — profiling ran, but the iteration cap (`maxIters`, default
+  6) was hit with an actionable hotspot still present, no optimization could be
+  applied to the top hotspot, or the **same hotspot survives `staleStop`+1 rounds
+  with no accepted speedup** (the no-progress guard). A STALL is reported with
+  the surviving hotspot and most likely next action.
 
 An optimization is only **accepted** when the independent verifier confirms
 **both**:
@@ -127,13 +137,13 @@ Workflow({ scriptPath: "<skills>/arm64-port-orchestrator/assets/perf-optimize-lo
 ```
 
 The driver returns
-`{ status: CONVERGED | STALL, reason, iterations, acceptedOptimizations, lessonsCaptured, finalTotalCpuMs, history, progressLog }`.
+`{ status: CONVERGED | PAUSED_NEEDS_ADMIN | STALL, reason, iterations, acceptedOptimizations, lessonsCaptured, finalTotalCpuMs, history, progressLog }`.
 
 ### Prerequisites and honest limits
 
 - **Trace capture needs an elevated shell** (kernel CPU sampling). If the host is
-  not elevated, the Profile stage reports failure and the driver STALLs with that
-  reason — it does not silently skip profiling and claim success.
+  not elevated, the Profile stage returns `PAUSED_NEEDS_ADMIN`. It does not
+  silently skip profiling, continue to optimization, or archive the change.
 - **Symbols matter.** If `unresolvedPct > 5`, module/function rankings are less
   trustworthy (weak PDB coverage); the driver surfaces the number so a human can
   judge. Provide `sourceMap` so `perf-optimizer` can locate hot functions in

@@ -269,3 +269,71 @@ specs:
       - SSE checks MSB of each byte; NEON checks all bits (but compare results are all-1s/all-0s so it matches)
     validation_criteria:
       - _mm_blendv_epi8(a,b,mask) replaced with vbslq_u8(mask,b,a) — verify operand swap
+
+  - id: 9
+    name: aes-crypto-round-to-neon
+    category: intrinsic-mapping
+    description: >
+      x86 AES-NI and ARMv8 Crypto decompose an AES round differently, so
+      substituting vaesdq_u8 for _mm_aesdec_si128 (or vaeseq_u8 for
+      _mm_aesenc_si128) is SILENTLY WRONG — it compiles, runs fast, and yields
+      plausible but non-matching data. x86 XORs the round key AFTER the round and
+      includes (Inv)MixColumns in the one instruction: AESENC(s,k) =
+      k ^ MixColumns(SubBytes(ShiftRows(s))). ARM XORs the key FIRST and leaves
+      (Inv)MixColumns to a separate AESMC/AESIMC: AESE(s,k) =
+      SubBytes(ShiftRows(s ^ k)). Correct emulation therefore passes a ZERO key
+      to AESE/AESD and applies the real key XOR after AESMC/AESIMC. Cost: one
+      x86 instruction becomes three ARM instructions (AESE/AESD + AESMC/AESIMC +
+      EOR); keep the AES and MC ops adjacent and dependent so cores can fuse
+      them, and fold the trailing EOR into the next round's key operand only when
+      the value's sole next use is as an AES state input.
+    metadata:
+      match_rules:
+        - pattern: "_mm_aes(enc|dec)(last)?_si128"
+          type: regex
+          scope: intrinsic_call
+          description: x86 AES-NI full/last encryption or decryption round
+        - pattern: "_mm_aes(imc|keygenassist)_si128"
+          type: regex
+          scope: intrinsic_call
+          description: x86 AES-NI InvMixColumns / key-expansion assist
+        - pattern: "\\b(aesenc|aesdec|aesenclast|aesdeclast|aesimc)\\s*\\("
+          type: regex
+          scope: expression
+          description: >
+            AES round reached through a one-line macro/inline alias (e.g. meow_hash's
+            `#define aesdec(A,B) A = _mm_aesdec_si128(A,B)`), where no literal
+            _mm_aes* token appears in the ported region
+        - pattern: "#\\s*define\\s+aes(enc|dec|imc)"
+          type: regex
+          scope: preprocessor
+          description: macro definition aliasing an AES round intrinsic
+        - pattern: "v(aese|aesd|aesmc|aesimc)q_u8"
+          type: regex
+          scope: intrinsic_call
+          description: NEON AES output construct (self-check on the ported code)
+    x64_constructs:
+      - "_mm_aesenc_si128(s, k)      // k ^ MixColumns(SubBytes(ShiftRows(s)))"
+      - "_mm_aesenclast_si128(s, k)  // k ^ SubBytes(ShiftRows(s))"
+      - "_mm_aesdec_si128(s, k)      // k ^ InvMixColumns(InvSubBytes(InvShiftRows(s)))"
+      - "_mm_aesdeclast_si128(s, k)  // k ^ InvSubBytes(InvShiftRows(s))"
+      - "_mm_aesimc_si128(x)"
+      - "_mm_aeskeygenassist_si128(k, imm)"
+    arm64_constructs:
+      - "veorq_u8(vaesmcq_u8(vaeseq_u8(s, vdupq_n_u8(0))), k)   // = _mm_aesenc_si128(s, k)"
+      - "veorq_u8(vaeseq_u8(s, vdupq_n_u8(0)), k)               // = _mm_aesenclast_si128(s, k)"
+      - "veorq_u8(vaesimcq_u8(vaesdq_u8(s, vdupq_n_u8(0))), k)  // = _mm_aesdec_si128(s, k)"
+      - "veorq_u8(vaesdq_u8(s, vdupq_n_u8(0)), k)               // = _mm_aesdeclast_si128(s, k)"
+      - "vaesimcq_u8(x)                                          // = _mm_aesimc_si128(x)"
+      - "// _mm_aeskeygenassist_si128: no ARM equivalent — expand the key scalar-side, or SubBytes via vaeseq_u8(x, zero) with a vqtbl1q_u8 inverse-ShiftRows pre-permutation, then RotWord + Rcon"
+    pitfalls:
+      - "vaesdq_u8(s, k) is NOT _mm_aesdec_si128(s, k): ARM XORs k before the round and omits InvMixColumns"
+      - "Wrong round order does not crash or look broken — it produces a different but still random-looking result, so only a byte-exact cross-architecture comparison catches it"
+      - "Do not 'optimize away' the AESIMC/AESMC or the EOR; both are load-bearing in the emulation"
+      - "clang/gcc need -march=armv8-a+crypto (clang-cl: /clang:-march=armv8-a+crypto) and define __ARM_FEATURE_AES/__ARM_FEATURE_CRYPTO; MSVC ARM64 exposes the intrinsics unconditionally — emit an #error or a runtime-gated fallback instead of silently building a non-AES path"
+      - "Every intrinsic may be hidden behind a one-line macro alias; expand macros before deciding an AES round is absent from a region"
+    validation_criteria:
+      - "ARM64 output is byte-exact vs the x64 AES-NI build on the same inputs (self-consistency is NOT sufficient)"
+      - "FIPS-197 KAT passes: key 000102..0f, plaintext 00112233445566778899aabbccddeeff, ciphertext 69c4e0d86a7b0430d8cdb78070b4c55a"
+      - "Decomposition identity holds: AESDEC(s,0) == AESIMC(AESDECLAST(s,0))"
+      - "A crypto-feature gate exists (compile-time #error or runtime check), not a silent fallback"

@@ -342,8 +342,16 @@ specs:
     description: >
       Horizontal adds map to vpaddq (AArch64) or vpadd half-width (ARMv7).
       _mm_movemask_epi8 has no direct NEON equivalent — use vmaxvq for
-      any-match boolean, or vshrn nibble-mask + ctzll for position. Sad and
-      hsub require multi-step recipes.
+      any-match boolean, or vshrn nibble-mask + ctzll for position. hsub
+      requires a sub + vpaddq recipe. _mm_sad_epu8 has TWO distinct uses that map
+      differently, so inspect the second operand: when it is ZERO the intrinsic is
+      a horizontal BYTE-SUM idiom, not an absolute difference — accumulate with
+      vpadalq_u8 into uint16x8_t (or reduce immediately with vaddlvq_u8) and do NOT
+      emit a vabdq against a zero vector; when it is real data, use
+      vabdq_u8 followed by vpadalq_u8 / vaddlvq_u8. Mind the accumulator width:
+      PSADBW accumulates into 64-bit lanes and practically cannot overflow, while a
+      uint16x8_t accumulator holds only 65535 per lane — bound the loop
+      (iterations × max_byte × 2 < 65535) or drain into uint32x4_t with vpadalq_u16.
     metadata:
       match_rules:
         - pattern: "_mm_h(add|sub)_(epi16|epi32|ps|pd)"

@@ -105,7 +105,7 @@ specs:
       - Position calculation requires dividing ctzll result by 4
     validation_criteria:
       - No _mm_movemask_epi8 calls in ARM64 code path
-      - "Any match?" tests use vmaxvq_u8
+      - '"Any match?" tests use vmaxvq_u8'
       - Position-finding uses vshrn_n_u16 with shift count 4
 
   - id: 4
@@ -298,7 +298,18 @@ specs:
     category: register-width
     description: >
       AVX2 cross-lane operations (permute across 128-bit boundaries) have no
-      direct NEON equivalent since NEON is always 128-bit.
+      direct NEON equivalent since NEON is always 128-bit. Before emulating one
+      with vqtbl/vext, ask WHY it is there: a cross-lane permute at the END of a
+      transpose/unpack network is usually a REPAIR step that exists only because
+      x86's unpack/shuffle intrinsics act independently within each 128-bit half
+      of a YMM register. A NEON port that decomposes the network into two real
+      128-bit halves never creates that mis-ordering, so the repair permute must be
+      DROPPED, not translated — transliterating it re-scrambles correct data.
+      Re-derive the lane bookkeeping of the decomposed network and keep the
+      permute only if the required output order still differs. A genuine cross-lane
+      data movement (gather-like permute of live data, not a repair) does need
+      emulation: vqtbl2q_u8/vqtbl4q_u8 over the concatenated halves, or explicit
+      vextq/vcombine of the two halves.
     metadata:
       match_rules:
         - pattern: "_mm256_permute2x128_si256"

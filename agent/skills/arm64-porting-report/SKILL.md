@@ -83,6 +83,42 @@ If you scope `code_range` at the wrapper alone (e.g. lines `10-12`), the matcher
 
 A wrapper may also use `#define LONGEST_MATCH foo` / `#include "match_tpl.h"` to instantiate a template under a configured name. The 10-line `#define`-block alone has zero intrinsics. Apply Rule A: include the template body in `code_range` (or emit a sibling item for the template body).
 
+### Rule C — Intrinsics Hidden Behind Aliases (macros, wrappers, operator overloads)
+
+A `code_range` can be dense with SIMD work and still contain **zero matchable
+tokens**, because the project never writes the intrinsic name at the point of use:
+
+```c
+/* meow_hash_x64_aesni.h */
+#define aesdec(A, B)  A = _mm_aesdec_si128(A, B)     /* ← the only _mm_ token */
+#define pshufb(A, B)  A = _mm_shuffle_epi8(A, B)
+...
+aesdec(r1, r2);  pshufb(xmm9, xmm10);                /* ← what the kernel looks like */
+```
+
+The same blindness comes from C++ operator-overload wrappers (`v4sf operator*`),
+`static inline` one-line wrappers, and generic SSE→NEON shim headers. The matcher
+regexes the bytes in `code_range`, so a range covering only the *call sites* yields
+no candidates for the very intrinsics that dominate the port — observed on
+meow_hash (macro aliases: the AES round matched nothing until the range also
+covered the `#define` block) and on romeric/fastapprox (operator-overload wrappers:
+the whole kernel matched nothing).
+
+**Required behaviour**: before finalising a `code_range`, grep it for
+`_mm[0-9]*_` / `__m128|__m256`. If the count is zero (or far below what the item's
+description implies), find the alias layer and either
+
+1. **extend `code_range` to include the alias definitions** — usually a compact
+   block of `#define`s or one-line wrappers near the top of the file — expressed
+   as a multi-range (`code_range: "169-179, 173-200"`), or
+2. **name the expansion explicitly** in `description` / `intrinsic_equivalents`
+   (e.g. `"aesdec(A,B) = _mm_aesdec_si128(A,B)"`), so the literal intrinsic token
+   appears in the item text the matcher reads.
+
+Do both when the alias layer is far from the kernel. Also expand every alias before
+concluding an operation is *absent* from a region — "no AES here" is usually "AES
+behind a macro".
+
 ## Architectural Variants — One x86 Kernel, Multiple ARM64 Targets
 
 A single x86 SIMD kernel often deserves **more than one** ARM64 implementation, gated on different runtime CPU features. The classic case is CRC32:

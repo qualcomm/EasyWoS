@@ -4,6 +4,15 @@ A turn-by-turn record of the user prompts and a summary of the LLM reply for
 each. Restricted to the porting task itself (skill setup, OpenSpec change,
 dispatcher emulation, zlib-ng integration, verification).
 
+> **Harness note.** This transcript was captured on **Claude Code**, so its
+> prompts use Claude slash-commands (`/opsx:propose`, `/opsx:apply`,
+> `/dispatcher-skill …`). On **Codex** (or any harness without slash-command
+> skills) the equivalents are: the OpenSpec CLI (`openspec propose` / `openspec
+> apply` / `openspec archive`) for the `opsx:*` lines, and a natural-language
+> "use the dispatcher-skill with these args" for the `/dispatcher-skill …` lines.
+> The record is illustrative of the *flow*, not a literal script to replay
+> verbatim on Codex.
+
 ---
 
 ## 1. Prompt — leaf-skill-creator add-yaml mode

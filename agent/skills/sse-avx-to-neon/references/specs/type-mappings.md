@@ -284,9 +284,33 @@ No direct NEON horizontal intrinsics for epi32 — use pairwise add:
 | `_mm_hadd_epi32` | `vpaddq_s32` (A64V8) |
 | `_mm_hadd_ps` | `vpaddq_f32` (A64V8) |
 | `_mm_hsub_epi16` | no direct — compute via sub + vpaddq |
-| `_mm_sad_epu8` | `vpaddlq_u8` chain |
+| `_mm_sad_epu8` | two distinct cases — see below |
 | `_mm_movemask_epi8` | see recipe below |
 | `_mm_movemask_ps` | see recipe below |
+
+**`_mm_sad_epu8(a, b)` — check the second operand first.** PSADBW does two things
+at once (absolute difference, then a horizontal sum of 8 bytes into each 64-bit
+lane), and real code uses it for one or the other:
+
+```c
+// CASE 1 — b is ZERO: this is not an absolute difference at all, it is a
+// horizontal BYTE-SUM idiom (a very common use: population/correction sums).
+// Map it to widening pairwise accumulate; do NOT emit a vabdq against zero.
+acc_u16 = vpadalq_u8(acc_u16, v);        // accumulate in-loop, 8 u16 lanes
+// or, when a scalar is wanted right away:
+uint16_t total = vaddlvq_u8(v);          // full 16-byte horizontal sum, one op
+
+// CASE 2 — b is real data: absolute difference, then horizontal sum.
+uint8x16_t d = vabdq_u8(a, b);           // |a-b| per byte
+acc_u16 = vpadalq_u8(acc_u16, d);        // or vaddlvq_u8(d) for a scalar
+```
+
+Accumulator width is the trap: PSADBW accumulates into **64-bit** lanes and
+effectively cannot overflow, while a `uint16x8_t` `vpadalq_u8` accumulator holds
+only 65535 per lane. Bound it (`iterations × max_byte × 2 < 65535`) or drain
+periodically into `uint32x4_t` with `vpadalq_u16`. Note ARM64's form is *better
+suited* than x86's here — the pairwise-accumulate keeps the running sum in the
+vector register instead of forcing a separate add per group.
 
 **movemask recipe (epi8):**
 ```c

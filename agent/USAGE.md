@@ -127,14 +127,15 @@ skill content is Markdown and YAML and binds to no particular model API.
 
 | Item | Status |
 |----|------|
-| Validated today | **Anthropic Claude** (via Claude Code / Claude Agent SDK). Every end-to-end run, spec capture, and measurement to date was produced on Claude. |
+| Validated today | **Claude Code + Opus**, **Codex + GPT**, and **OpenCode + DeepSeek**. End-to-end runs, spec capture, and measurements have been produced on all three harness/model pairs. |
 | What the model needs | Long context — the scan YAML, spec recipes, and source have to fit together, and 1M context is recommended; reliable tool use (read/write files, run builds, run tests, run profiles); and enough instruction-following to hold the "don't claim it unverified" line. **Models with weak tool use fail in the outer build→test→fix loop**, not at translation. |
-| Planned next | We are actively trying more models; **Kimi K3** and **Kimi Code** are next up for validation. |
+| Planned next | We are actively trying more harness/model pairs; **Qwen + Qwen Code** and **Kimi K3 + Kimi Code** are next up for validation. |
 | What changing models costs | Nothing in the skill content. But every agent harness has its own preferences and defaults, so harnesses can diverge in how they call tools and how they honor the flow and rules EasyWoS defines. Supporting a new harness therefore means adjusting some of EasyWoS's design rules to match it. |
 
-> To be clear: models other than Claude — including Kimi K3 and Kimi Code — have
-> **not been tested yet**. The "planned next" row is a roadmap, not a result. We'll
-> fill in actual findings here once the end-to-end runs are done.
+> To be clear: harness/model pairs beyond the three validated above — including
+> Qwen + Qwen Code and Kimi K3 + Kimi Code — have **not been tested yet**. The
+> "planned next" row is a roadmap, not a result. We'll fill in actual findings
+> here once those end-to-end runs are done.
 
 ---
 
@@ -170,7 +171,7 @@ Re-run after the repo updates to pick up new/changed specs.
 | Running the pipeline scripts | Node.js (the `scripts/` use `js-yaml`; `npm install` in `skills/easywos-spec/scripts/`) |
 | Orchestration with OpenSpec | OpenSpec CLI (`openspec`), and the activation rule wired in `openspec/config.yaml` |
 | Building/verifying ARM64 output | A native ARM64 host (Windows on ARM, or aarch64 Linux), MSVC ARM64 toolchain (VS 2019+) or GCC/Clang, CMake 3.14+ |
-| Profiling (`skills/profiling/`) | Python 3.8+; an **elevated shell** for `etl-generator` only (kernel CPU sampling needs the NT Kernel Logger); Node.js to serve the interactive flame graph |
+| Profiling (`skillsthe profiling skills under /`) | Python 3.8+; an **elevated shell** for `etl-generator` only (kernel CPU sampling needs the NT Kernel Logger); Node.js to serve the interactive flame graph |
 
 ---
 
@@ -229,7 +230,7 @@ just describe the task and the matching skill activates:
 - *"Add ARM64 support to this CMake/VS project"* → `enable-windows-arm64`
 - *"Generate an ARM64 porting report for this repo"* → `arm64-porting-report`
 - *"This ARM64EC JIT is allocating code pages wrong"* → `jit-arm64ec-virtualalloc-fix-skill`
-- *"Profile this program and tell me where the CPU goes"* → `skills/profiling/` (see §7)
+- *"Profile this program and tell me where the CPU goes"* → `skillsthe profiling skills under /` (see §7)
 
 When no specific spec matches, `arm64-baseline-porting` supplies the mandatory
 ARM64 invariants (Windows ARM64 ABI, weak memory ordering, 128-bit NEON width,
@@ -255,7 +256,7 @@ etl-generator  →  perf-sampling-parser  →  perf-optimizer
 `perf-optimizer` invokes `perf-sampling-parser` automatically when handed an
 `.etl` instead of a SpeedScope JSON; `perf-sampling-parser` and `etl-generator`
 share the bundled `PerfView.exe`. The suite vendors PerfView + TraceEvent and a
-speedscope web bundle — see `skills/profiling/THIRD-PARTY-NOTICES.md`.
+speedscope web bundle — see `skills/PROFILING-THIRD-PARTY-NOTICES.md`.
 
 Two things worth knowing before trusting a profile:
 
@@ -374,11 +375,10 @@ easywos-skills/
 │   ├── enable-windows-arm64/        # add ARM64 configs to a project's build system
 │   ├── jit-arm64ec-virtualalloc-fix-skill/  # ARM64EC JIT code-page allocation bug
 │   │
-│   │   # ── profiling pipeline (measure the port) ──
-│   ├── profiling/
-│   │   ├── etl-generator/           # run a target under PerfView's CPU sampler → .etl
-│   │   ├── perf-sampling-parser/    # .etl → per-process CPU ranking + SpeedScope flame graph
-│   │   └── perf-optimizer/          # flame graph → root-cause module + source gap scan + HTML report
+│   │   # ── profiling pipeline (measure the port), now flat skills ──
+│   ├── etl-generator/               # run a target under PerfView's CPU sampler → .etl
+│   ├── perf-sampling-parser/        # .etl → per-process CPU ranking + SpeedScope flame graph
+│   ├── perf-optimizer/              # flame graph → root-cause module + source gap scan + HTML report
 │   │
 │   │   # ── authoring / reporting ──
 │   ├── arm64-porting-report/        # generate the EasyWoS-style porting YAML
@@ -410,7 +410,7 @@ roles:
 - **Leaf skills** own the migration logic. Each holds one or more *specs* — a
   matched `.yaml` (machine-readable: match rules, x64/arm64 constructs,
   pitfalls, validation) and a `.md` (the human/agent-readable recipe).
-- **Profiling** (`skills/profiling/`) measures the ported binary: capture a
+- **Profiling** (`skillsthe profiling skills under /`) measures the ported binary: capture a
   trace, rank CPU by process, export a flame graph, attribute hot leaves to a
   root-cause module, and scan the source for x64-SIMD-without-NEON gaps. Usable
   standalone (§7), and invoked automatically by the orchestrator's §8.5.
@@ -440,7 +440,7 @@ leaf skill  → ARM64 source output (C/intrinsics or .asm)
    │  ⑦′ verify→retry loop – feedback file → re-dispatch, ≤K attempts (easywos-spec §8)
    ▼
 verified ARM64 port
-   │  ⑧ profile against the REAL fallback (orchestrator §8.5 / skills/profiling)
+   │  ⑧ profile against the REAL fallback (orchestrator §8.5 / the profiling skills)
    ▼
 verified AND measured ARM64 port
 ```
@@ -652,4 +652,4 @@ always-loaded discipline section, not buried in one leaf.
 - **Outer + performance loops:** `skills/arm64-port-orchestrator/references/`
   (`outer-loop.md`, `perf-optimize-loop.md`, `build-test-detection.md`,
   `verification-measurement-discipline.md`).
-- **Profiling:** `skills/profiling/README.md`.
+- **Profiling:** `skills/PROFILING-README.md`.

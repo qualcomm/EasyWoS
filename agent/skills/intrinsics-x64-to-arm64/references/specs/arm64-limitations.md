@@ -317,3 +317,38 @@ uint32_t _Val = vget_lane_u32(_V, 0);
 
 This is a subtle but real bug that appears when porting x64 scalar tail code to ARM64.
 The STL consistently uses `vld1_lane_u32` / `vst1_lane_u32` for 4-byte tails.
+
+---
+
+## Cross-128-bit-Lane Operations
+
+**x64**: AVX2 can move data across the 128-bit halves of a YMM register —
+`_mm256_permutevar8x32_epi32`, `_mm256_permute2x128_si256`,
+`_mm256_permute4x64_epi64`, `_mm512_permutexvar_*`.
+
+**ARM64**: no such instruction exists, because a NEON vector *is* 128 bits. But
+before reaching for a `vqtbl2q_u8`/`vqtbl4q_u8` emulation, classify the permute:
+
+**(a) Repair permute — delete it.** x86's unpack/shuffle family
+(`_mm256_unpacklo_epi8/16/32/64`, `_mm256_unpackhi_*`, `_mm256_shuffle_epi32`)
+operates **independently within each 128-bit half**. A 256-bit transpose built
+from them therefore ends with its words in a *mis-ordered* arrangement, and the
+kernel appends one cross-lane permute purely to fix that. Example — c-blosc2's
+`shuffle4_avx2` ends with `_mm256_permutevar8x32_epi32(v, {0,4,1,5,2,6,3,7})`.
+A NEON port that decomposes the network into two genuinely separate 128-bit
+halves **never creates the mis-ordering**, so the permute has nothing to repair:
+translating it re-scrambles already-correct data. Work the lane bookkeeping
+through the decomposed network, and keep a permute only if the required output
+order still differs. This is the common case for transpose/interleave kernels,
+and it is a silent-corruption bug when got wrong (the output is well-formed, just
+permuted).
+
+**(b) Genuine cross-lane data movement — emulate it.** A permute that shuffles
+live data (not a repair) does need work: `vqtbl2q_u8` / `vqtbl4q_u8` over the
+concatenated halves for byte-granular tables, or explicit
+`vextq_*` / `vcombine_*` / `vzip1q_*`+`vzip2q_*` of the two halves for
+structured moves.
+
+**Diagnostic**: if removing the permute from the ported kernel makes it *match*
+the x86 output, it was case (a). Always gate the decision on a byte-exact
+comparison against the x86 result, never on inspection.

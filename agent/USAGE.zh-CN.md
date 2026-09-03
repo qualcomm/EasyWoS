@@ -104,9 +104,9 @@ YAML，不绑定任何特定模型 API。
 
 | 项 | 现状 |
 |----|------|
-| 当前验证过的模型 | **Anthropic Claude**（通过 Claude Code / Claude Agent SDK）。目前所有端到端运行、规格沉淀与实测数据都是在 Claude 上取得的。 |
+| 当前验证过的组合 | **Claude Code + Opus**、**Codex + GPT**、**OpenCode + DeepSeek**。这三组 harness/模型 组合都已跑通端到端流程并取得实测数据。 |
 | 对模型能力的要求 | 长上下文（要同时装下扫描 YAML、规格配方与源码，推荐1M的上下文）、可靠的工具调用（读写文件、跑构建、跑测试、跑剖析）、以及能坚持"未验证就不声称"的指令遵循能力。**弱工具调用能力的模型会在外层循环（构建→测试→修复）处失败**，而不是在翻译处失败。 |
-| 计划中的验证 | 我们正在积极尝试更多模型。下一步计划验证 **Kimi K3** 与 **Kimi Code**。 |
+| 计划中的验证 | 我们正在积极尝试更多 harness/模型 组合。下一步计划验证 **Qwen + Qwen Code** 与 **Kimi K3 + Kimi Code**。 |
 | 换模型需要改什么 | 技能内容不需要改。由于每个Agent harness有各自的偏好和设置，在调用工具、处理EasyWoS定义的流程和规则时可能会产生分歧。所以每适配一个Agent harness，就需要对应调整EasyWoS的一些设计规则，以此实现兼容不同的Agent harness。 |
 
 ---
@@ -141,7 +141,7 @@ npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
 | 运行流水线脚本 | Node.js（`scripts/` 使用 `js-yaml`；在 `skills/easywos-spec/scripts/` 下执行 `npm install`） |
 | 配合 OpenSpec 编排 | OpenSpec CLI（`openspec`），并在 `openspec/config.yaml` 中接好激活规则 |
 | 构建/验证 ARM64 产物 | 原生 ARM64 主机（Windows on ARM 或 aarch64 Linux）、MSVC ARM64 工具链（VS 2019+）或 GCC/Clang、CMake 3.14+ |
-| 性能剖析（`skills/profiling/`） | Python 3.8+；**仅 `etl-generator` 需要管理员权限的 shell**（内核 CPU 采样使用 NT Kernel Logger）；Node.js 用于提供交互式火焰图 |
+| 性能剖析（`skillsthe profiling skills under /`） | Python 3.8+；**仅 `etl-generator` 需要管理员权限的 shell**（内核 CPU 采样使用 NT Kernel Logger）；Node.js 用于提供交互式火焰图 |
 
 ---
 
@@ -190,7 +190,7 @@ npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
 - *"给这个 CMake/VS 项目加上 ARM64 支持"* → `enable-windows-arm64`
 - *"为这个仓库生成 ARM64 移植报告"* → `arm64-porting-report`
 - *"这个 ARM64EC JIT 的代码页分配有问题"* → `jit-arm64ec-virtualalloc-fix-skill`
-- *"剖析这个程序，告诉我 CPU 花在哪了"* → `skills/profiling/`（见 §7）
+- *"剖析这个程序，告诉我 CPU 花在哪了"* → `skillsthe profiling skills under /`（见 §7）
 
 当没有任何具体规格匹配时，`arm64-baseline-porting` 提供必须遵守的 ARM64 不变量
 （Windows ARM64 ABI、弱内存序、128 位 NEON 宽度、ARM64EC shim、短缓冲/尾部守卫、
@@ -215,7 +215,7 @@ etl-generator  →  perf-sampling-parser  →  perf-optimizer
 当传入 `.etl` 而非 SpeedScope JSON 时，`perf-optimizer` 会自动调用 `perf-sampling-parser`；
 `perf-sampling-parser` 与 `etl-generator` 共用内置的 `PerfView.exe`。本套件内置了
 PerfView + TraceEvent 及 speedscope 网页包，许可与署名见
-`skills/profiling/THIRD-PARTY-NOTICES.md`。
+`skills/PROFILING-THIRD-PARTY-NOTICES.md`。
 
 在相信一份剖析结果之前，有两点必须知道：
 
@@ -345,7 +345,7 @@ easywos-skills/
   以及*用哪个配方*，并负责逐内核的验证→重试循环（`easywos-spec` §8）。它不包含迁移逻辑。
 - **叶子技能**承载迁移逻辑。每个技能持有一到多个*规格*——一份匹配用 `.yaml`
   （机器可读：匹配规则、x64/arm64 构造、陷阱、验证标准）和一份 `.md`（人/智能体可读的配方）。
-- **性能剖析**（`skills/profiling/`）衡量移植后的二进制：采集 trace、按进程排 CPU、导出火焰图、
+- **性能剖析**（`skillsthe profiling skills under /`）衡量移植后的二进制：采集 trace、按进程排 CPU、导出火焰图、
   将热点叶子归因到根因模块、扫描源码中"有 x64 SIMD 但无 NEON"的缺口。可独立使用（§7），
   也会被编排器的 §8.5 自动调用。
 
@@ -374,7 +374,7 @@ dispatcher-skill（逐条目）
    │  ⑦′ 验证→重试循环 – 反馈文件 → 重新分发，最多 K 次（easywos-spec §8）
    ▼
 已验证的 ARM64 移植
-   │  ⑧ 对照【真实回退实现】做性能剖析（编排器 §8.5 / skills/profiling）
+   │  ⑧ 对照【真实回退实现】做性能剖析（编排器 §8.5 / the profiling skills）
    ▼
 既验证正确、又验证收益的 ARM64 移植
 ```
@@ -549,4 +549,4 @@ skills/<leaf-skill>/
 - **外层循环与性能循环：** `skills/arm64-port-orchestrator/references/`
   （`outer-loop.md`、`perf-optimize-loop.md`、`build-test-detection.md`、
   `verification-measurement-discipline.md`）。
-- **性能剖析：** `skills/profiling/README.md`。
+- **性能剖析：** `skills/PROFILING-README.md`。

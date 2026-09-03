@@ -67,11 +67,19 @@ specs:
     name: deferred-multiply-for-weighted-sums
     category: performance-arithmetic
     description: >
-      Never multiply inside a hot loop that computes Σ weight[i]*b[i].
-      Accumulate raw byte sums into uint16x8_t lanes with cheap widening
-      adds (vaddw_u8 / vaddw_high_u8) and apply weights once after the loop
-      with vmlal_u16 / vmlal_high_u16. Verify uint16 cannot overflow:
-      iterations × max_byte × lanes_per_acc < 65535.
+      APPLIES ONLY when the multiplier is loop-invariant (constant weight or
+      coefficient table): then Σ w[i]*b[i] regroups as w*(Σ b) and the multiply
+      leaves the loop. Never multiply inside such a hot loop — accumulate raw byte
+      sums into uint16x8_t lanes with cheap widening adds (vaddw_u8 /
+      vaddw_high_u8) and apply weights once after the loop with vmlal_u16 /
+      vmlal_high_u16. Verify uint16 cannot overflow: iterations × max_byte ×
+      lanes_per_acc < 65535. DOES NOT APPLY to a data×data product (dot product
+      Σ a[i]*b[i] where both operands change per iteration): nothing can be
+      factored out, and deferring the multiply yields a WRONG kernel rather than a
+      slow one — use vmull_s16 + vpadalq / vmlal_s16 (or SDOT/UDOT when the values
+      fit in 8 bits) with several independent accumulators instead. A
+      madd/maddubs match is therefore a candidate to be checked against the
+      operands, not a verdict.
     metadata:
       match_rules:
         # --- x86 SOURCE triggers: the weighted-sum idiom in SSE/AVX ---
@@ -625,3 +633,113 @@ specs:
       - The chosen path matches the regime — estimate+NR only where the reciprocal/rsqrt is the measured bottleneck; full-precision vdivq/vsqrtq otherwise
       - NR step count matches the source's precision (SSE rcp_sqrt_nr_ps = 1 NR ~ 24-bit)
       - The A-vs-B decision is backed by a paired back-to-back measurement, not a single ETL magnitude
+
+  - id: 14
+    name: delete-x86-workarounds-arm64-has-the-instruction
+    category: performance-arithmetic
+    description: >
+      Much SSE/AVX code is compensation for a missing x86 primitive rather than
+      algorithm, and porting it literally carries pure overhead plus its
+      correctness hazards into the ARM64 kernel. Recognise and DELETE the
+      workaround: x86 lacks a signed 8-bit multiply, so kernels bias operands
+      (x ^ 0x08), widen to 16-bit, madd, then subtract correction sums and add a
+      k*n term — ARM64 has vmull_s8/vmlal_s8 on sign-extended bytes, so the bias,
+      the correction sums (often built with _mm_sad_epu8) and the whole epilogue
+      disappear, along with the padding accounting they required. Same shape for:
+      no 8-bit shift (16-bit shift + 0x0F mask -> vshrq_n_u8 / vshlq_n_s8), no
+      pre-AVX2 variable shift (multiply by a power-of-two table -> native
+      vshlq_* with a vector count), horizontal reduction ladders (-> vaddvq_* /
+      vaddlvq_*), pshufb popcount LUT (-> vcntq_u8), and sign-flip tricks for
+      unsigned compares (-> native vcgtq_u8/vcgeq_u32). SAFE ONLY when both forms
+      are exact evaluations of the same expression (then bit-identical by
+      construction); if the forms differ in rounding, saturation or overflow
+      behaviour, the "workaround" is part of the specified result — keep it.
+    metadata:
+      match_rules:
+        - pattern: "_mm(256|512)?_xor_si(128|256|512)\\s*\\([^;]*_mm(256|512)?_set1_epi8\\s*\\(\\s*(0x08|8|0x80|128)"
+          type: regex
+          scope: intrinsic_call
+          description: bias/sign-flip constant XORed into operands — signature of an x86 missing-primitive workaround
+        - pattern: "_mm(256|512)?_srli_epi16\\s*\\([^;]*4\\s*\\)"
+          type: regex
+          scope: intrinsic_call
+          description: 16-bit shift used on byte data (x86 has no 8-bit shift) — maps to vshrq_n_u8
+        - pattern: "_mm(256|512)?_cvtepu8_epi16|_mm(256|512)?_cvtepi8_epi16"
+          type: regex
+          scope: intrinsic_call
+          description: byte-to-16-bit widening feeding a multiply — check whether vmull_s8/vmlal_s8 removes the widening entirely
+        - pattern: "vmull_s8|vmlal_s8|vshrq_n_s8|vshlq_n_s8"
+          type: regex
+          scope: intrinsic_call
+          description: NEON output construct (self-check that the port used the native signed 8-bit path)
+    x64_constructs:
+      - "c = _mm_xor_si128(nibble, _mm_set1_epi8(0x08)); ... _mm256_madd_epi16(c16, d16); ... _mm_sad_epu8(c, zero) // bias + correction sums"
+      - "_mm_and_si128(_mm_srli_epi16(v, 4), _mm_set1_epi8(0x0F)) // 8-bit shift emulation"
+    arm64_constructs:
+      - "vmull_s8(vshrq_n_s8(vshlq_n_s8(v, 4), 4), ...) // sign-extend nibbles and multiply directly; no bias, no correction sums"
+      - "vshrq_n_u8(v, 4) // native 8-bit shift"
+    pitfalls:
+      - "Only delete a compensation step when both forms are EXACT evaluations of the same expression"
+      - "Never delete a step that carries rounding/saturation/overflow semantics (float reassociation, saturating narrows, rounding multiplies)"
+      - "Deleting the bias also removes the padding/n-inflation accounting it needed — make sure zero padding now contributes exactly 0"
+    validation_criteria:
+      - "Ported kernel is exact against the SCALAR DEFINITION (not against the x86 workaround's intermediate values), including n=0, odd n, and extreme operand values"
+      - "The removed correction terms are shown to be unnecessary, not merely assumed"
+
+  - id: 15
+    name: soa-byte-transpose-use-vldn-not-unpack-tree
+    category: performance-datamovement
+    description: >
+      x86 has no de-interleaving load, so SSE/AVX kernels that split
+      array-of-structures into planes (byte-plane shuffle filters, RGB->planar,
+      complex->re/im, any dest[p*n+e] = src[e*P+p]) build the transpose from an
+      unpack/shuffle tree (_mm_unpacklo_epi8, _mm256_unpacklo_epi8/16/32/64,
+      _mm256_shuffle_epi32) usually ending in a cross-lane repair permute. ARM64
+      has the missing instruction: vld2q/vld3q/vld4q de-interleave (and
+      vst2q/vst3q/vst4q re-interleave) in ONE op, with val[k][n] == src[N*n+k],
+      which IS the transpose. Match N to the element size in bytes. Applying "no
+      256-bit registers -> two 128-bit ops" plus "loadu -> two vld1q" literally
+      reproduces the x86 tree, i.e. faithfully preserves a workaround for an
+      instruction ARM64 has. Measured on c-blosc2 shuffle4_avx2 (Windows ARM64,
+      byte-identical output, paired alternating rounds with cooldowns): vld4q_u8 was
+      ~1.3-1.8x faster memory-resident and ~2.0-2.5x faster cache-resident, winning
+      every paired round on both MSVC cl and clang-cl; the two compilers disagreed
+      on the streaming magnitude because the vld4q form is already near the
+      machine's bandwidth limit, so quote the range. Mechanism (from disassembly):
+      ~60 instructions per 16 elements for the tree vs ~40 per 32 elements for
+      vld4. Bonus correctness property: vldN never creates x86's in-lane
+      mis-ordering, so the trailing cross-lane repair permute must be DROPPED, not
+      emulated.
+    metadata:
+      match_rules:
+        - pattern: "_mm(256|512)?_unpack(lo|hi)_epi8"
+          type: regex
+          scope: intrinsic_call
+          description: byte-level unpack — the x86 de-interleave/transpose tree
+        - pattern: "_mm(256|512)?_unpack(lo|hi)_epi(16|32|64)"
+          type: regex
+          scope: intrinsic_call
+          description: word/dword/qword unpack continuing the transpose network
+        - pattern: "vld1q_u8\\s*\\([^;]*\\)[^;]*vzip1q_u8"
+          type: regex
+          scope: intrinsic_call
+          description: NEON output self-check — plain load feeding a zip tree instead of vld4q
+        - pattern: "vld[234]q_(u8|u16|u32)|vst[234]q_(u8|u16|u32)"
+          type: regex
+          scope: intrinsic_call
+          description: NEON de-interleaving load/store already in use (good)
+    x64_constructs:
+      - "ymm1 = _mm256_shuffle_epi32(ymm0, 0xd8); ymm0 = _mm256_unpacklo_epi8(ymm1, ymm0); ... _mm256_permutevar8x32_epi32(ymm0, mask)"
+      - "dest[p * total_elements + e] = src[e * bytesoftype + p]  // the layout the tree implements"
+    arm64_constructs:
+      - "uint8x16x4_t p = vld4q_u8(src); vst1q_u8(dest + k*n, p.val[k]);   // AoS -> SoA, stride 4"
+      - "vst4q_u8(dest, p);                                                // SoA -> AoS"
+      - "vld2q_u8 / vld3q_u8 / vld2q_u16 / vld4q_u32 for other strides and element widths"
+    pitfalls:
+      - "Do NOT translate the trailing cross-lane repair permute — with vldN there is nothing to repair and emulating it silently permutes correct data"
+      - "vldN stride must match the element size in bytes (4-byte type -> vld4q_u8), not the register count"
+      - "The tail (elements past the vectorizable count) is still the caller's / a scalar loop's job — vldN does not change that contract"
+    validation_criteria:
+      - "Output byte-exact vs the x86 kernel or the scalar layout definition dest[p*n+e] = src[e*P+p]"
+      - "Negative control: swap two output planes and confirm the check reports failure"
+      - "If a speedup is claimed, it comes from a paired alternating A/B with equal-work checksums, not from two separate runs"

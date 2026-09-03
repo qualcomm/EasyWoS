@@ -2,7 +2,13 @@
 
 This is the algorithm the orchestrator owns (SKILL.md §7–§8). It is **implemented
 as deterministic code** in [../assets/outer-loop-driver.js](../assets/outer-loop-driver.js)
-and run via the Workflow tool — this document is the spec/rationale for that
+and run via the Workflow tool (Claude Code). The driver is a **Workflow scriptlet**
+(it relies on injected `args`/`agent`/`parallel`/`log`/`phase` + top-level await),
+**not** a standalone Node CLI — `node outer-loop-driver.js` will not run it. On
+**Codex or any harness without the Workflow runtime, do not execute the driver
+file; instead enact the algorithm THIS document specifies using the harness's own
+tools** (see SKILL.md §0.1 / §7.2). This document is the harness-neutral
+spec/rationale for that
 script, not a set of steps for an LLM to execute by hand. The loop control,
 fan-out, retry counters, and exit criteria are the orchestration-layer (①)
 decision and therefore live in code; agents only fill in the ② fix and ③ verify

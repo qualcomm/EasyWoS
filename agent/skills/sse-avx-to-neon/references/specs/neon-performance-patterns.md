@@ -31,7 +31,22 @@ buf += 64; dst += 64;
 
 ### 2. Deferred Multiply for Weighted Sums
 
-When computing a weighted sum (Σ weight[i]×b[i]), **never multiply inside the loop**. Accumulate raw byte sums into `uint16x8_t` lanes with cheap widening adds, then apply weights once after the loop with `vmlal_u16`.
+**Scope condition — read this before applying.** This pattern is valid only when
+the multiplier is a **loop-invariant weight** (a constant, a coefficient table, a
+per-lane scale): then Σ w[i]·b[i] can be regrouped as Σ over distinct weights of
+w·(Σ b), so the multiply leaves the loop. It is **invalid for a data×data
+product** — a dot product Σ a[i]·b[i] where both operands change every iteration
+cannot defer its multiply at all, because there is nothing to factor out.
+Deferring one there produces a *wrong kernel*, not a slow one. So an
+`_mm_madd_epi16` / `_mm_maddubs_epi16` match is a *candidate*, not a verdict:
+check what the two operands are first. For a genuine data×data product, use
+`vmull_s16`+`vpadalq`/`vmlal_s16` (or SDOT/UDOT where the values fit in 8 bits)
+with several independent accumulators (pattern 3) instead.
+
+When computing a weighted sum (Σ weight[i]×b[i]) with loop-invariant weights,
+**never multiply inside the loop**. Accumulate raw byte sums into `uint16x8_t`
+lanes with cheap widening adds, then apply weights once after the loop with
+`vmlal_u16`.
 
 ```c
 // BAD: multiply every iteration
@@ -437,3 +452,85 @@ profiler only to confirm the leaf is genuine kernel work).
   ≈ 24-bit; do not silently drop or add NR steps).
 - The A-vs-B decision is backed by a paired back-to-back measurement, not a single
   ETL magnitude.
+
+### 14. Delete x86 Workarounds for Instructions ARM64 Actually Has
+
+A surprising amount of SSE/AVX code is not *algorithm*, it is **compensation for a
+missing x86 primitive**. Ported literally, that compensation survives into the
+ARM64 kernel as pure overhead — and it drags its correctness hazards (bias terms,
+padding accounting, extra accumulators) along with it. Recognise the workaround
+and delete it, keeping only what the algorithm actually needs.
+
+Recurring cases, and what ARM64 offers instead:
+
+| x86 has no… | so SSE/AVX code does this | ARM64 instead |
+|---|---|---|
+| signed 8-bit multiply (no `_mm_mullo_epi8`) | bias operands into unsigned (`x ^ 0x08`), widen to 16-bit, `madd`, then subtract correction sums (`Σ(a) `, `Σ(b)`) and add a `k·n` term back | `vmull_s8` / `vmlal_s8` directly on sign-extended bytes; the whole bias + correction + `k·n` epilogue disappears |
+| 8-bit shift (`psrlb` does not exist) | 16-bit shift plus an `& 0x0F` mask fixup | `vshrq_n_u8` / `vshlq_n_s8` |
+| per-lane variable shift pre-AVX2 | multiply by a power-of-two table | `vshlq_s32`/`vshlq_u8` with a vector shift count (native) |
+| horizontal reduction | log₂-step `shuffle`+`add` ladder | `vaddvq_*` / `vaddlvq_*` (one op) |
+| population count | `pshufb` nibble-LUT (see pattern 9) | `vcntq_u8` |
+| unsigned compare on some widths | XOR with a sign-flip constant first | `vcgtq_u8`/`vcgeq_u32` (native unsigned compares) |
+
+**Correctness rule that makes deletion safe.** Only delete a compensation step
+when both forms are *exact* evaluations of the same integer/real expression — then
+the results are bit-identical by construction, and the tail/padding accounting the
+workaround required (e.g. inflating `n` so a `+k·n` term cancels zero padding)
+also becomes unnecessary. Verified on ashvardanian/SimSIMD's int4 dot product,
+whose entire `(a-8)(b-8)` expansion — nibble bias, four `_mm_sad_epu8` correction
+sums, and the `-8(Σc+Σd)+64n` epilogue — exists solely because SSE lacks a signed
+8-bit multiply; the NEON port sign-extends nibbles with `vshlq_n_s8`/`vshrq_n_s8`
+and multiplies with `vmull_s8`, dropping all of it, and is exact against the scalar
+definition over 4812 cases including the n=0, odd-n and all-`-8` extremes.
+
+**Do not** delete a step you have merely *decided* is redundant: if the two forms
+differ in rounding, saturation, or overflow behaviour (float reassociation,
+saturating narrows, `mulhrs`-style rounding multiplies), the "workaround" is part
+of the specified result and must be kept.
+
+### 15. SoA Byte-Transpose / De-interleave: Use `vldN`/`vstN`, Not the x86 Unpack Tree
+
+x86 has no de-interleaving load. So every SSE/AVX kernel that splits an
+array-of-structures into planes — byte-plane shuffle filters (compressors),
+RGB→R/G/B planar splits, complex→re/im, any `dest[p*n + e] = src[e*P + p]` — builds
+the transpose out of an **unpack/shuffle tree**: `_mm_unpacklo_epi8` /
+`_mm256_unpacklo_epi8/16/32/64` + `_mm256_shuffle_epi32`, typically ending in a
+cross-lane repair permute (see `arm64-limitations` → Cross-128-bit-Lane Operations).
+
+ARM64 has the instruction the tree was emulating. `vldNq`/`vstNq` de-interleave and
+re-interleave N-way in one operation:
+
+```c
+// AoS -> SoA, stride 4 (32 elements = 128 bytes per iteration)
+uint8x16x4_t p = vld4q_u8(src);        // p.val[k][n] == src[4*n + k]  — IS the transpose
+vst1q_u8(dest + 0*n, p.val[0]);
+vst1q_u8(dest + 1*n, p.val[1]);
+vst1q_u8(dest + 2*n, p.val[2]);
+vst1q_u8(dest + 3*n, p.val[3]);
+// SoA -> AoS is the mirror: vst4q_u8(dest, plane_struct)
+```
+
+Stride 2/3/4 all exist (`vld2q`/`vld3q`/`vld4q`, and the `_u16`/`_u32` forms for
+wider elements), so match N to the element size in bytes.
+
+**Why it matters.** A literal application of "no 256-bit registers → split into two
+128-bit ops" plus "`_mm256_loadu_si256` → two `vld1q_u8`" reproduces the x86 unpack
+tree faithfully — i.e. it faithfully preserves a **workaround for an instruction
+ARM64 has** (this is pattern 14's shape applied to data movement). Measured on
+c-blosc2's `shuffle4_avx2` (Windows ARM64, byte-identical output on both sides,
+paired alternating rounds with cooldowns): the `vld4q_u8` form ran **~1.3–1.8x
+faster on a memory-resident 4 MiB buffer and ~2.0–2.5x faster cache-resident
+(32 KiB)**, winning every paired round on both MSVC `cl` and `clang-cl`. Report the
+range, not one number: the two compilers disagreed on the streaming magnitude
+(1.78x vs 1.30x) because the `vld4q` form is already near the machine's streaming
+bandwidth limit. Disassembly of the real objects showed the mechanism: ~60
+instructions per 16 elements for the tree (16 `zip1`, 8 `ext`, 4 `uzp1`, 4 `uzp2`,
+4 `zip2`; clang even lowered part of it to 8 `tbl` + 8 `dup`) versus ~40 per 32
+elements for `vld4` — roughly 3x the instructions per element.
+
+**Correctness note that comes free.** Because `vldN` never creates x86's in-lane
+mis-ordering, the AVX2 kernel's trailing `_mm256_permutevar8x32_epi32` has nothing
+to repair and **must be dropped, not emulated** — emulating it re-scrambles correct
+data (silent format corruption, not a crash). Gate the port on a byte-exact
+comparison against the x86/scalar reference, plus a negative control that swaps two
+planes so you have seen the check reject a wrong layout.

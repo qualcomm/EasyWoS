@@ -17,6 +17,7 @@ All mappings are verified against real production usage in that codebase.
 11. [Type Conversion / Reinterpret](#type-conversion--reinterpret)
 12. [Conditional Select](#conditional-select)
 13. [Prefetch](#prefetch)
+14. [AES-NI / Crypto Round](#aes-ni--crypto-round)
 
 ---
 
@@ -293,3 +294,68 @@ uint64_t _Mask = vget_lane_u64(vreinterpret_u64_u8(_Narrowed), 0);
 |---|---|
 | `_mm_prefetch(ptr, _MM_HINT_T0)` | `__builtin_prefetch(ptr, 0, 3)` or `__pld(ptr)` |
 | `_mm_prefetch(ptr, _MM_HINT_NTA)` | `__builtin_prefetch(ptr, 0, 0)` |
+
+---
+
+## AES-NI / Crypto Round
+
+x86 AES-NI and ARMv8 Crypto Extensions **decompose an AES round differently**.
+A 1:1 substitution of `vaesdq_u8` for `_mm_aesdec_si128` (or `vaeseq_u8` for
+`_mm_aesenc_si128`) compiles, runs at full speed, and produces *plausible-looking
+but wrong* data — no crash, no NaN, just a different result. For a hash, a MAC or
+a cipher that must interoperate with the x64 build, that is a silent correctness
+failure, so this table is the mapping, not a hint.
+
+The mechanism — where the round key goes, and who does MixColumns:
+
+| | x86 AES-NI | ARMv8 Crypto |
+|---|---|---|
+| Round-key XOR | **after** the round transform | **before** SubBytes/ShiftRows (fused into `AESE`/`AESD`) |
+| (Inv)MixColumns | **inside** `AESENC`/`AESDEC` | a **separate** instruction (`AESMC`/`AESIMC`) |
+
+```
+x86:  AESENC (s,k) = k ^ MixColumns   (SubBytes   (ShiftRows   (s)))
+      AESDEC (s,k) = k ^ InvMixColumns(InvSubBytes(InvShiftRows(s)))
+ARM:  AESE   (s,k) =     SubBytes   (ShiftRows   (s ^ k))
+      AESD   (s,k) =     InvSubBytes(InvShiftRows(s ^ k))
+      AESMC  (x)   = MixColumns(x)         AESIMC(x) = InvMixColumns(x)
+```
+
+Pass a **zero key** to `AESE`/`AESD`, then apply the real key XOR **after** the
+(Inv)MixColumns step:
+
+| x64 Intrinsic | ARM64 NEON Equivalent | Notes |
+|---|---|---|
+| `_mm_aesenc_si128(s, k)` | `veorq_u8(vaesmcq_u8(vaeseq_u8(s, vdupq_n_u8(0))), k)` | full encryption round |
+| `_mm_aesenclast_si128(s, k)` | `veorq_u8(vaeseq_u8(s, vdupq_n_u8(0)), k)` | last round — no MixColumns |
+| `_mm_aesdec_si128(s, k)` | `veorq_u8(vaesimcq_u8(vaesdq_u8(s, vdupq_n_u8(0))), k)` | full decryption round |
+| `_mm_aesdeclast_si128(s, k)` | `veorq_u8(vaesdq_u8(s, vdupq_n_u8(0)), k)` | last round — no InvMixColumns |
+| `_mm_aesimc_si128(x)` | `vaesimcq_u8(x)` | 1:1 |
+| `_mm_aeskeygenassist_si128(k, imm)` | **no equivalent** — build SubBytes from `vaeseq_u8(x, zero)` (it also applies ShiftRows, so pre-compensate with a `vqtbl1q_u8` inverse-ShiftRows permutation), then RotWord + Rcon XOR; or expand the key scalar-side with a plain S-box table | key expansion, usually cold code — prefer the scalar version |
+
+**Cost.** One x86 AES instruction becomes **three** ARM instructions (AESE/AESD +
+AESMC/AESIMC + EOR). Do not treat that as a defect to optimize away by dropping
+the AESIMC or the EOR — both are load-bearing. The AESE/AESD → AESMC/AESIMC pair
+is fused into one operation by most ARMv8 cores when the two are adjacent and
+dependent, so keep them adjacent. Where a value's *only* next use is as the state
+input of another AES round, the trailing `EOR` can be folded into that round's key
+operand (`AESD(state, pending_key)`) instead of being applied eagerly — a legal
+2-instruction form, valid only under that condition.
+
+**Feature gating.** These intrinsics need the ARMv8 AES extension: clang/gcc
+require `-march=armv8-a+crypto` (`clang-cl: /clang:-march=armv8-a+crypto`) and
+define `__ARM_FEATURE_CRYPTO` / `__ARM_FEATURE_AES`; MSVC ARM64 exposes
+`vaeseq_u8` / `vaesdq_u8` / `vaesmcq_u8` / `vaesimcq_u8` from `<arm_neon.h>`
+unconditionally with no flag. Emit an `#error` (or a runtime feature check plus a
+table-based fallback) rather than silently compiling a non-AES path.
+
+**Validation.** Self-consistency is not enough — a wrong round order still hashes
+"randomly". Check byte-exactness against the x64 build on the same inputs, and
+pin the instructions themselves with the FIPS-197 known-answer vector
+(key `000102…0f`, plaintext `00112233445566778899aabbccddeeff`, ciphertext
+`69c4e0d86a7b0430d8cdb78070b4c55a`). The decomposition identity
+`AESDEC(s, 0) == AESIMC(AESDECLAST(s, 0))` is a cheap extra check that the
+key-XOR position is being handled as documented. Verified on cmuratori/meow_hash
+(whose entire mixing core is `_mm_aesdec_si128`): with this mapping the ARM64 port
+is byte-identical to x64 AES-NI across 682 (length, seed) cases on both MSVC
+ARM64 and clang-cl ARM64.
