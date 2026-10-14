@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easywos.local/schemas/command-evidence.schema.json",
+  "title": "EasyWoS build or test command evidence",
+  "type": "object",
+  "required": ["schema_version", "stage", "command", "exit_code", "source_tree_fingerprint"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "stage": { "enum": ["build-x64", "test-x64", "build-arm64", "test-arm64"] },
+    "command": { "type": "string", "minLength": 1 },
+    "exit_code": { "const": 0 },
+    "tests_discovered": { "type": "integer", "minimum": 0 },
+    "tests_passed": { "type": "integer", "minimum": 0 },
+    "tests_failed": { "type": "integer", "minimum": 0 },
+    "source_tree_fingerprint": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": true
+}

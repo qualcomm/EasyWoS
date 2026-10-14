@@ -22,7 +22,7 @@ const { execSync } = require("child_process");
 const yaml = require("./node_modules/js-yaml");
 
 const SCRIPT_PATH = path.resolve(__dirname, "spec_matcher.js");
-const SPECS_PATH = path.resolve(__dirname, "../../../openspec/changes/x64-intrinsics-to-arm64-spec-list/combined-spec-summary.yaml");
+const SPECS_PATH = path.resolve(__dirname, "../../combined-spec-summary.yaml");
 
 let passed = 0;
 let failed = 0;
@@ -92,9 +92,9 @@ console.log("\nTest 1: Scope filtering — instruction patterns skip comments");
   assert(result.candidates.length === 1, "One porting item processed");
 
   const matches = result.candidates[0].matches;
-  // jb/jne appear only in comments, so spec 13 should NOT match
-  const spec13 = matches.find(m => m.spec_id === 13);
-  assert(!spec13, "Spec 13 (Flag Discipline) does not match patterns in comments");
+  // jb/jne appear only in comments, so no flag-discipline spec should match.
+  const flagSpec = matches.find(m => /flag-discipline/.test(m.spec_name));
+  assert(!flagSpec, "Flag-discipline specs do not match patterns in comments");
 }
 
 // ---------------------------------------------------------------------------
@@ -124,16 +124,16 @@ console.log("\nTest 2: Multi-match — code triggers multiple spec candidates");
   const matches = result.candidates[0].matches;
   assert(matches.length >= 2, `Multiple specs matched (got ${matches.length})`);
 
-  const spec12 = matches.find(m => m.spec_id === 12);
-  const spec13 = matches.find(m => m.spec_id === 13);
-  assert(!!spec12, "Spec 12 (Callee-Saved) matched push %rbx/%rbp");
-  assert(!!spec13, "Spec 13 (Flag Discipline) matched jnz/jne");
+  const spec12 = matches.find(m => m.spec_name === "callee-saved-register-set");
+  const spec13 = matches.find(m => m.spec_name === "conditional-branch-mnemonic-mapping");
+  assert(!!spec12, "Callee-saved spec matched push %rbx/%rbp");
+  assert(!!spec13, "Conditional-branch spec matched jnz/jne");
 
   if (spec12) {
     assert(spec12.rules_hit >= 1, `Spec 12 rules_hit >= 1 (got ${spec12.rules_hit})`);
   }
   if (spec13) {
-    assert(spec13.rules_hit >= 2, `Spec 13 rules_hit >= 2 (got ${spec13.rules_hit})`);
+    assert(spec13.rules_hit >= 1, `Conditional-branch rules_hit >= 1 (got ${spec13.rules_hit})`);
   }
 }
 

@@ -4,8 +4,8 @@ description: >-
   Expert skilltree layer-1 dispatcher. Receives porting task commands from
   tasks.md, parses arguments, loads porting_item data and spec descriptions,
   then routes to the appropriate leaf skill for actual migration execution.
-  Invoked as: /dispatcher-skill <porting_item_id> --specs <ids> --source <path>
-  or /dispatcher-skill <porting_item_id> --mode llm-freeform --source <path>.
+  Invoked with a porting item id, matched spec ids, and matched YAML source, or
+  with mode llm-freeform when no spec matched.
   Does NOT contain migration logic itself — only routing and data assembly.
 tags:
   - dispatcher
@@ -44,6 +44,14 @@ tasks.md command → Dispatcher (parse + load + route) → Leaf Skill (execute m
 > syntax differs; the argument parsing (§1.2) and routing (§2+) are identical
 > across harnesses.
 
+> **Codex audit adapter.** For an end-to-end lifecycle run, first execute
+> `node scripts/codex/dispatcher-adapter.js prepare ...` with the matched YAML,
+> raw matcher evidence, and `skills/combined-spec-summary.yaml`. Use the request's
+> `primary_leaf_skill`/supplemental skills to perform the port, then execute
+> `record-result` with the producer session and patch/file hashes. The adapter
+> does not invoke a skill from Node; it makes this skill's routing contract
+> executable, resumable, and auditable. A missing request/result blocks archive.
+
 **Standard (with matched specs):**
 ```
 /dispatcher-skill <porting_item_id> --specs <comma-separated-spec-ids> --source <matched-yaml-path>
@@ -77,6 +85,9 @@ tasks.md command → Dispatcher (parse + load + route) → Leaf Skill (execute m
 4. If `--specs` is present, value must be non-empty comma-separated integers
 5. `--feedback <path>` is OPTIONAL; if present, the file MUST exist and parse (see §2.7). A missing/unreadable feedback file is a hard error — do NOT silently proceed as a first attempt, because that would drop the failure signal and let the loop re-emit the same broken output.
 6. If validation fails, report error and stop
+7. In a lifecycle run, every `--specs` ID MUST have concrete evidence in the
+   raw `spec_matcher.js` output; a spec present only in the LLM-refined YAML is
+   rejected as untraceable.
 
 ---
 

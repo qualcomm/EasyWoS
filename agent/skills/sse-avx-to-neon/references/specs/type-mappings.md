@@ -241,6 +241,44 @@ do {
 | `_mm_blend_epi16(a,b,mask)` | `vbslq_s16(mask_vec, b, a)` with precomputed lane mask |
 | `_mm_blendv_epi8(a,b,mask)` | `vbslq_s8(mask, b, a)` |
 | `_mm_blendv_ps(a,b,mask)` | `vbslq_f32(vreinterpretq_u32_f32(mask), b, a)` |
+| `_mm_alignr_epi8(hi, lo, n)` | `vextq_u8(lo, hi, n)` — **operands reversed** |
+| `_mm_alignr_epi8(hi, lo, 8)` on 64-bit lanes | `vextq_u64(lo, hi, 1)` — index is in *elements*, not bytes |
+| `_mm256_alignr_epi8(hi, lo, n)` | `vextq_u8` per 128-bit half (x86 aligns within each lane too) |
+
+**`_mm_alignr_epi8` → `vextq_*` (PALIGNR → EXT).** This is an exact 1:1 instruction
+mapping, but two things flip and both are silent-wrong-answer bugs:
+
+1. **Operand order is reversed.** `_mm_alignr_epi8(hi, lo, n)` concatenates as
+   `lo:hi` and extracts the window starting `n` bytes in; NEON's
+   `vextq_u8(a, b, n)` concatenates as `a:b`. So the `hi`/`lo` arguments must be
+   swapped when porting:
+   ```c
+   // x86
+   __m128i r = _mm_alignr_epi8(hi, lo, 8);
+   // ARM64 — note hi and lo exchanged
+   uint8x16_t r = vextq_u8(lo, hi, 8);
+   ```
+2. **The index unit follows the lane type.** `vextq_u8(lo, hi, 8)` and
+   `vextq_u64(lo, hi, 1)` are the same permutation; `vextq_u64(lo, hi, 8)` is not
+   a valid index. Pick the lane type that matches how the data is used (prefer
+   `vextq_u64` for 64-bit-lane kernels so no reinterpret is needed).
+
+A cross-register 64-bit lane rotation (the BLAKE2/ChaCha-style
+`DIAGONALIZE`/`UNDIAGONALIZE` step, where a logical 4-lane vector held in two
+128-bit registers rotates by one lane) is built from exactly two `vextq_u64`
+calls with the operands crossed one way for rotate-left and the other for
+rotate-right. Verify it lane-by-lane against the scalar permutation — the two
+directions look identical on inspection.
+
+> **MSVC caveat.** `__builtin_shufflevector` is a clang/gcc extension and is **not
+> available under MSVC** (`_M_ARM64` / `_M_ARM64EC`). For MSVC-targeted ports use
+> the native ops instead: `vqtbl1q_u8` with an explicit byte-index table,
+> `vrev64q_u32` / `vrev32q_u16` / `vrev16q_u8` for reversals, `vextq_*` for byte
+> alignment, `vzip1q_*` / `vzip2q_*` for unpacks, or `vgetq_lane`/`vsetq_lane`
+> sequences as a last resort. In particular
+> `_mm_shuffle_epi32(v, _MM_SHUFFLE(2,3,0,1))` — swap the two 32-bit halves inside
+> each 64-bit lane — is just `vrev64q_u32(v)`, one instruction, no builtin needed.
+
 
 **Shuffle pattern (when no direct NEON equivalent):**
 ```c

@@ -10,145 +10,18 @@ const path = require("path");
 
 const SKILLS_DIR = path.resolve(__dirname, "../../");
 const OUTPUT_PATH = path.resolve(SKILLS_DIR, "combined-spec-summary.yaml");
+const yaml = require(path.resolve(SKILLS_DIR, "easywos-spec/scripts/node_modules/js-yaml"));
 
 // ---------------------------------------------------------------------------
-// Minimal YAML parser for our known spec.yaml structure
+// YAML loading
 // ---------------------------------------------------------------------------
 
 function parseSpecYaml(filePath) {
-  // Normalize CRLF -> LF on read. Source spec .yaml files checked out on Windows
-  // may have CRLF; without this, split("\n") leaves a trailing "\r" on every
-  // line that gets concatenated into folded descriptions as a mid-line CR,
-  // producing a combined-spec-summary.yaml that js-yaml rejects
-  // ("bad indentation of a mapping entry"). See parseSpecYaml callers + the
-  // downstream spec_matcher.js which loads the output with js-yaml.
-  const content = fs.readFileSync(filePath, "utf8").replace(/\r\n?/g, "\n");
-  const specs = [];
-  let current = null;
-  let inMetadata = false;
-  let inMatchRules = false;
-  let currentRule = null;
-  let inDescription = false;
-  let descriptionIndent = 0;
-
-  const lines = content.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trimStart();
-    const indent = line.length - trimmed.length;
-
-    if (trimmed.startsWith("- id:")) {
-      if (currentRule && current) current.metadata.match_rules.push(currentRule);
-      currentRule = null;
-      if (current) specs.push(current);
-      current = {
-        id: trimmed.replace("- id:", "").trim(),
-        name: "",
-        description: "",
-        metadata: { match_rules: [] },
-      };
-      inMetadata = false;
-      inMatchRules = false;
-      inDescription = false;
-      continue;
-    }
-
-    if (!current) continue;
-
-    if (trimmed.startsWith("name:") && indent <= 6) {
-      current.name = trimmed.replace("name:", "").trim();
-      inDescription = false;
-      continue;
-    }
-
-    if (trimmed.startsWith("description:") && indent <= 6 && !inMatchRules) {
-      const val = trimmed.replace("description:", "").trim();
-      if (val === ">" || val === "|") {
-        inDescription = true;
-        descriptionIndent = indent + 2;
-        current.description = "";
-      } else {
-        current.description = val.replace(/^["']|["']$/g, "");
-        inDescription = false;
-      }
-      continue;
-    }
-
-    if (inDescription && indent >= descriptionIndent &&
-        !trimmed.startsWith("metadata:") && !trimmed.startsWith("x64_constructs:") &&
-        !trimmed.startsWith("arm64_constructs:") && !trimmed.startsWith("pitfalls:") &&
-        !trimmed.startsWith("validation_criteria:")) {
-      current.description += (current.description ? " " : "") + trimmed;
-      continue;
-    } else if (inDescription) {
-      inDescription = false;
-    }
-
-    if (trimmed.startsWith("metadata:")) {
-      inMetadata = true;
-      inDescription = false;
-      continue;
-    }
-
-    if (inMetadata && trimmed.startsWith("match_rules:")) {
-      inMatchRules = true;
-      continue;
-    }
-
-    if (inMatchRules) {
-      if (trimmed.startsWith("- pattern:")) {
-        if (currentRule) current.metadata.match_rules.push(currentRule);
-        currentRule = {
-          pattern: trimmed.replace("- pattern:", "").trim().replace(/^["']|["']$/g, ""),
-          type: "",
-          scope: "",
-          description: "",
-        };
-        continue;
-      }
-      if (currentRule && trimmed.startsWith("type:")) {
-        currentRule.type = trimmed.replace("type:", "").trim();
-        continue;
-      }
-      if (currentRule && trimmed.startsWith("scope:")) {
-        currentRule.scope = trimmed.replace("scope:", "").trim();
-        continue;
-      }
-      if (currentRule && trimmed.startsWith("description:")) {
-        currentRule.description = trimmed.replace("description:", "").trim().replace(/^["']|["']$/g, "");
-        continue;
-      }
-      if (indent <= 4 && !trimmed.startsWith("-") && trimmed !== "") {
-        if (currentRule) {
-          current.metadata.match_rules.push(currentRule);
-          currentRule = null;
-        }
-        inMatchRules = false;
-        inMetadata = false;
-      }
-    }
+  const data = yaml.load(fs.readFileSync(filePath, "utf8"));
+  if (!data || !Array.isArray(data.specs)) {
+    throw new Error("expected top-level specs array");
   }
-
-  if (currentRule && current) current.metadata.match_rules.push(currentRule);
-  if (current) specs.push(current);
-
-  return specs;
-}
-
-// ---------------------------------------------------------------------------
-// YAML output formatting
-// ---------------------------------------------------------------------------
-
-function formatInlineValue(v) {
-  if (v === null || v === undefined) return "null";
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (typeof v === "string") {
-    if (v.match(/[:#{}[\],&*?|>'"!%@`\\]/)) {
-      return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-    }
-    return v;
-  }
-  return String(v);
+  return data.specs;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,32 +75,17 @@ function main() {
     }
   }
 
-  // Build output YAML
-  let output = "";
-  output += `version: "1.0"\n`;
-  output += `generated_at: "${new Date().toISOString().slice(0, 10)}"\n`;
-  output += `description: Combined spec collection aggregated from all leaf skills\n`;
-  output += `total_specs: ${combined.length}\n`;
-  output += `\n`;
-  output += `specs:\n`;
-
-  for (const spec of combined) {
-    output += `  - id: ${spec.id}\n`;
-    output += `    name: ${formatInlineValue(spec.name)}\n`;
-    output += `    source: ${spec.source}\n`;
-    output += `    source_sub_dimension: ${spec.source_sub_dimension}\n`;
-    output += `    source_id: ${formatInlineValue(spec.source_id)}\n`;
-    output += `    description: >\n`;
-    output += `      ${spec.description}\n`;
-    output += `    metadata:\n`;
-    output += `      match_rules:\n`;
-    for (const rule of spec.metadata.match_rules) {
-      output += `        - pattern: ${formatInlineValue(rule.pattern)}\n`;
-      output += `          type: ${rule.type}\n`;
-      output += `          scope: ${rule.scope}\n`;
-      output += `          description: ${formatInlineValue(rule.description)}\n`;
-    }
-  }
+  const output = yaml.dump({
+    version: "1.0",
+    generated_at: new Date().toISOString().slice(0, 10),
+    description: "Combined spec collection aggregated from all leaf skills",
+    total_specs: combined.length,
+    specs: combined,
+  }, {
+    noRefs: true,
+    lineWidth: 160,
+    sortKeys: false,
+  });
 
   fs.writeFileSync(OUTPUT_PATH, output, "utf8");
 

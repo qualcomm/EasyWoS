@@ -18,7 +18,16 @@ Analyze per-process CPU usage from an ETL log; after the user selects target pro
 ## Inputs
 
 - **Required**: path to the ETL file
-- **Required**: confirm the PDB path with the user (semicolon-separated, NT symbol path format). If not provided, the script will automatically search the ETL's directory and `_NT_SYMBOL_PATH`.
+- **Optional**: target process name. When the ETL was just collected for a known
+  target executable, select that exact process automatically instead of asking
+  the user to choose it again.
+- **Optional**: additional local PDB directories (semicolon-separated, NT symbol
+  path format).
+
+The default symbol policy is **local-only**: search the ETL directory and known
+target/build directories, ignore inherited `_NT_SYMBOL_PATH` symbol servers, and
+do not contact Microsoft or any other symbol server. Network/UNC symbol paths and
+symbol servers require explicit user opt-in.
 
 ## Outputs
 - **Required**: the output directory is fixed to the directory containing the ETL file.
@@ -31,6 +40,9 @@ Analyze per-process CPU usage from an ETL log; after the user selects target pro
 ```bash
 python "<skill_dir>/scripts/process_tree.py" "<etl_path>"
 ```
+
+This command is local-symbol-only by default. Pass `--allow-symbol-servers` only
+after the user explicitly opts in to symbol-server access.
 
 Success marker: stdout contains `DONE ... OK`. On failure, read the first 50 lines of `<etl_dir>/temp/pfv_log.txt` and report them to the user.
 
@@ -68,46 +80,44 @@ Process names for selection: i4Tools, QtWebEngineProcess, svchost, Taskmgr, ...
 
 If no process has `cpuPct > 0`, tell the user "no CPU sampling data was captured" and list all processes for reference.
 
-### Step 2: Show the process list and let the user choose
+### Step 2: Select the target process
 
-Based on the Step 1.5 output, ask the user to choose 2-3 process names (without the `.exe` suffix) for analysis.
+If the ETL was collected for a known target executable in the current workflow,
+select its process name (without `.exe`) automatically. Otherwise, show the Step
+1.5 list and ask the user to choose 2-3 process names.
 
-### Step 3: Confirm the symbol path
+### Step 3: Resolve local symbols by default
 
-After the user picks the processes, you **must** confirm the following two points with the user before proceeding:
+Use local symbols without another confirmation when the target and its build/PDB
+directory are already known. Build the local symbol path from:
 
-1. **Custom PDB path**: ask whether there are extra PDB directories to add (local path or UNC, semicolon-separated). Leave empty if none.
-2. **Microsoft public symbol server**: ask whether to include the MSFT public PDBs (`SRV*C:\Temp\Symbols*https://msdl.microsoft.com/download/symbols`). Adding it lets system DLL symbols resolve, but the first download is slow.
+- the ETL directory;
+- the target executable's directory and build directory, when known;
+- any additional local PDB directories explicitly supplied by the user.
 
-Example prompt:
-```
-Selected process: i4Tools
+Do not append `_NT_SYMBOL_PATH`, UNC paths, `SRV*` entries, or HTTP(S) symbol
+servers in this mode. The export script enforces this policy even when the host
+environment has a corporate or public symbol server configured.
 
-Please confirm the symbol configuration:
-1. Any custom PDB path? (press Enter to skip)
-2. Include the Microsoft public symbol server? (y/n — enables system DLL symbols but is slow on first run)
-```
-
-**Assemble the final symbol path** (NT symbol path format, semicolon-separated):
-- Base: the ETL's directory (the script includes it automatically)
-- Append the user's custom path (if any)
-- If the user agrees, append `SRV*C:\Temp\Symbols*https://msdl.microsoft.com/download/symbols`
-
-Example final `<pdb_path>`:
-```
-D:\myapp\pdbs;SRV*C:\Temp\Symbols*https://msdl.microsoft.com/download/symbols
-```
+Only when the user explicitly requests symbol-server access, append the requested
+server path and pass `--allow-symbol-servers`. Microsoft public symbols remain an
+opt-in example: `SRV*C:\Temp\Symbols*https://msdl.microsoft.com/download/symbols`.
 
 ### Step 4: Export the SpeedScope JSON
 
-Without PDBs (the user provided neither):
+Local-only, using the ETL directory:
 ```bash
 python "<skill_dir>/scripts/etl_to_speedscope.py" "<etl_path>" "<comma-separated process names>" "<etl_dir>"
 ```
 
-With PDBs (the user supplied a custom path or opted into the MSFT public symbols):
+Local-only, with target/build PDB directories:
 ```bash
-python "<skill_dir>/scripts/etl_to_speedscope.py" "<etl_path>" "<comma-separated process names>" "<etl_dir>" "<pdb_path>"
+python "<skill_dir>/scripts/etl_to_speedscope.py" "<etl_path>" "<comma-separated process names>" "<etl_dir>" "<local_pdb_path>"
+```
+
+Explicit symbol-server opt-in:
+```bash
+python "<skill_dir>/scripts/etl_to_speedscope.py" "<etl_path>" "<comma-separated process names>" "<etl_dir>" "<symbol_path>" --allow-symbol-servers
 ```
 
 Success marker: stdout contains `DONE ... OK`. On failure, read the first 50 lines of `<etl_dir>/temp/pfv_log2.txt` and report them to the user.

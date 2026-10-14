@@ -32,24 +32,42 @@ SKIP_DIRS = {'build', '.git', 'obj', 'out', '__pycache__', '.vs', 'Debug', 'Rele
              'x64', 'arm64', 'CMakeFiles', 'node_modules', '.cache'}
 
 # ARM64 NEON presence indicators
+#
+# Must cover INTEGER NEON, not just f32: crypto, hashing, compression and codec
+# ports use integer lanes almost exclusively (e.g. Argon2's NEON fill_block is
+# written entirely in uint64x2_t / veorq_u64 / vld1q_u64). Listing only
+# *32x[248]_t and the _f32 intrinsics made every such port look unported and
+# produced false "x64 SIMD, no NEON" gap reports.
 NEON_PRESENT_PATTERNS = [
     r'\b__ARM_NEON\b',
     r'\b_M_ARM64\b',
     r'\b__aarch64__\b',
     r'#\s*include\s+[<"]arm_neon\.h[>"]',
     r'#\s*include\s+[<"]arm64_neon\.h[>"]',
-    r'\bfloat32x[248]_t\b',
-    r'\bint32x[248]_t\b',
-    r'\buint32x[248]_t\b',
-    r'\bvmaxq_f32\b|\bvminq_f32\b|\bvmulq_f32\b|\bvaddq_f32\b',
-    r'\bvld1q_f32\b|\bvst1q_f32\b|\bvsqrtq_f32\b',
-    r'\bvdupq_n_f32\b|\bvcvtq_f32_s32\b',
+    # Vector lane types: every width and element kind, not just 32-bit lanes.
+    r'\b(?:float|poly|int|uint)(?:8x8|8x16|16x4|16x8|32x2|32x4|64x1|64x2)_t\b',
+    r'\bpoly128_t\b',
+    # Intrinsics, matched by op family + type suffix so integer ops are seen.
+    r'\bv(?:ld|st)[1-4]q?(?:_lane|_dup)?_'
+    r'(?:[su](?:8|16|32|64)|f(?:16|32|64)|p(?:8|16|64))\b',
+    r'\bv(?:and|orr|eor|bic|orn|mvn|add|sub|mul|mla|mls|neg|abs|shl|shr|sri|sli'
+    r'|sra|ext|rev16|rev32|rev64|tbl|tbx|zip1|zip2|uzp1|uzp2|trn1|trn2|dup'
+    r'|combine|reinterpret|movn|movl|mull|mlal|mlsl|addl|addw|subl|subw|padd'
+    r'|paddl|max|min|maxv|minv|addv|cge|cgt|cle|clt|ceq|tst|cnt|clz|bsl|bit|bif'
+    r'|pmull|aese|aesd|sha1|sha256|crc32|hadd|rhadd|shrn|qadd|qsub|qshl|qmovn'
+    r'|qdmulh|rshr|rshrn|get|set)\w*_'
+    r'(?:[su](?:8|16|32|64)|f(?:16|32|64)|p(?:8|16|64|128))\b',
 ]
 
 # x64 SIMD presence indicators (SSE / AVX)
+#
+# Deliberately excludes the bare architecture macros _M_X64 / _M_AMD64 /
+# __x86_64__: they say "this is an x64 build", not "this code uses SSE/AVX", and
+# are routinely used for endianness or pointer-width checks. Counting them as
+# SIMD evidence flagged SIMD-free files as ARM64 gaps (e.g. Argon2's
+# blake2-impl.h, which uses defined(_M_X64) only to pick a byte order).
 X64_SIMD_PATTERNS = [
     r'\b__SSE2__\b', r'\b__SSE4_1__\b', r'\b__AVX2__\b', r'\b__AVX__\b',
-    r'\b_M_AMD64\b', r'\b_M_X64\b', r'\b__x86_64__\b',
     r'\b_mm256_\w+\s*\(',
     r'\b_mm_\w+\s*\(',
     r'\b__m256[di]?\b', r'\b__m128[di]?\b',

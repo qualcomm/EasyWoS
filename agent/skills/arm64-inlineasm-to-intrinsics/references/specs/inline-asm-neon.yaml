@@ -20,19 +20,25 @@ specs:
       (_M_ARM64 or _M_ARM64EC) check, keeping the original asm in the else
       branch, and proven equivalent with the bundled Verification gtest project.
     metadata:
-      match_rules:
-        - pattern: "(?:__asm__|asm)\\s+(?:__volatile__|volatile)?\\s*\\("
-          type: regex
-          scope: inline_asm
-          description: GCC/Clang extended inline-asm block opener
-        - pattern: "\\b[+=]?r\\b"
-          type: regex
-          scope: inline_asm
-          description: GNU extended-asm output/input register operand constraint
-        - pattern: "\\b(?:memory|cc)\\b"
-          type: regex
-          scope: inline_asm
-          description: Clobber-list entry (memory / cc) that fixes this as extended inline asm
+      match_groups:
+        - id: arm64-inline-asm-block
+          all_of:
+            - id: asm-opener
+              pattern: "(?:__asm__|asm)\\s+(?:__volatile__|volatile)?\\s*\\("
+              type: regex
+              scope: inline_asm
+              description: GCC/Clang extended inline-asm block opener
+          any_of:
+            - id: arm64-mnemonic-stream
+              pattern: "\\b(?:pmull2?|ld1|st1|aese|aesd|aesmc|rbit|movi|ushr|ext)\\b"
+              type: regex
+              scope: inline_asm
+              description: AArch64/NEON mnemonic proving the block is ARM64 rather than x86 extended asm
+            - id: arm64-target-guard
+              pattern: "__aarch64__|_M_ARM64|_M_ARM64EC"
+              type: regex
+              scope: preprocessor
+              description: ARM64 target guard surrounding the inline-asm block
     x64_constructs:
       - "N/A - input is already AArch64 inline asm, not x86; this is a GCC-inline-asm to MSVC-intrinsics toolchain port"
     arm64_constructs:

@@ -113,8 +113,9 @@ YAML，不绑定任何特定模型 API。
 
 ## 4. 安装
 
-技能从 Claude Code 的 skills 目录加载。本仓库现在作为子目录挂在 `qualcomm/EasyWoS`
-仓库下的 `agent/`（即 `agent/skills/...`），所以要用带子路径的方式安装。加上
+技能由受支持的 agent harness（Claude Code、Codex 以及安装器支持的其他 agent）加载。
+本仓库作为子目录挂在 `qualcomm/EasyWoS` 仓库下的 `agent/`（即
+`agent/skills/...`），所以要用带子路径的方式安装。加上
 `--all` 可以把全部技能装到检测到的所有 agent，且不再逐个弹出确认：
 
 ```bash
@@ -141,21 +142,22 @@ npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
 | 运行流水线脚本 | Node.js（`scripts/` 使用 `js-yaml`；在 `skills/easywos-spec/scripts/` 下执行 `npm install`） |
 | 配合 OpenSpec 编排 | OpenSpec CLI（`openspec`），并在 `openspec/config.yaml` 中接好激活规则 |
 | 构建/验证 ARM64 产物 | 原生 ARM64 主机（Windows on ARM 或 aarch64 Linux）、MSVC ARM64 工具链（VS 2019+）或 GCC/Clang、CMake 3.14+ |
-| 性能剖析（`skillsthe profiling skills under /`） | Python 3.8+；**仅 `etl-generator` 需要管理员权限的 shell**（内核 CPU 采样使用 NT Kernel Logger）；Node.js 用于提供交互式火焰图 |
+| 性能剖析（`etl-generator`、`perf-sampling-parser`、`perf-optimizer`） | Python 3.8+；**仅 `etl-generator` 需要管理员权限的 shell**（内核 CPU 采样使用 NT Kernel Logger）；Node.js 用于提供交互式火焰图 |
 
 ---
 
 ## 5. 快速上手——移植整个项目
 
 使用 EasyWoS 的方式是**与智能体对话**，而不是自己跑脚本（§11 里的脚本是给调试用的）。
-一条命令驱动全部环节——扫描、规划、移植、验证、集成、构建、跑项目自带测试、修复、
-剖析、归档：
+向 **easywos-skills** 提出一次请求即可驱动全部环节——扫描、规划、移植、验证、集成、构建、
+跑项目自带测试、修复、剖析、归档：
 
-```
-/arm64-port-orchestrator C:/src/my-project
+```text
+使用 easywos-skills 将 C:/src/my-project 端到端移植到 ARM64。
 ```
 
-这就是完整的调用方式。其余都是可选的调优参数，详见该技能自身的 §0。
+这在 Codex、Claude Code 及其他受支持的 agent 中都是完整的调用方式。agent 会自动选择内部
+编排技能，用户不需要知道其名称。构建/测试命令、性能负载和自主模式偏好可以附加在同一请求中。
 
 - **端到端执行** 遵循以下流程，全程不需要人工干预，除非遇到难以判断的情况
 
@@ -165,7 +167,9 @@ npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
 
 - **无条件停止**：依赖缺失、工具链缺口、构建/测试命令有歧义、循环不收敛。这些停止
   **不可屏蔽**，因为在这些地方靠猜会产出"看起来合理但其实是错的"移植。运行若被中断，
-  可以从已到达的阶段继续——进度记录在 `openspec/changes/<change-name>/` 下。
+  可以从已到达的阶段继续——进度记录在 `openspec/changes/<change-name>/` 下。Claude Workflow
+  使用 `.orchestrator-state.yaml`；Codex 使用由 `scripts/codex/lifecycle-driver.js` 维护、带证据索引的
+  `LIFECYCLE-STATE.yaml`。两套状态机制不能混用。
 
 **需要用户提供什么：** 流水线在方法上是自主的，但对它无法自行观察到的事实不会猜。
 请准备好以下内容，否则会被问到：
@@ -182,7 +186,8 @@ npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
 
 ## 6. 单独使用某个技能（不走完整流水线）
 
-不必运行整条流水线。每个技能都可独立使用——直接描述任务，对应技能就会激活：
+不必运行整条流水线。每个技能都可独立使用——直接描述任务，对应技能就会激活。在 Codex 中，
+需要明确指定技能时可在提示词前加 `$skill-name`；也仍然可以依靠自然语言自动选择：
 
 - *"把这个 SSE 内核移植成 NEON"* → `sse-avx-to-neon` / `intrinsics-x64-to-arm64`
 - *"把这段 MASM .asm 翻译成 AArch64"* → `asm-x64-to-arm64`
@@ -190,7 +195,7 @@ npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
 - *"给这个 CMake/VS 项目加上 ARM64 支持"* → `enable-windows-arm64`
 - *"为这个仓库生成 ARM64 移植报告"* → `arm64-porting-report`
 - *"这个 ARM64EC JIT 的代码页分配有问题"* → `jit-arm64ec-virtualalloc-fix-skill`
-- *"剖析这个程序，告诉我 CPU 花在哪了"* → `skillsthe profiling skills under /`（见 §7）
+- *"剖析这个程序，告诉我 CPU 花在哪了"* → `etl-generator` / `perf-sampling-parser` / `perf-optimizer`（见 §7）
 
 当没有任何具体规格匹配时，`arm64-baseline-porting` 提供必须遵守的 ARM64 不变量
 （Windows ARM64 ABI、弱内存序、128 位 NEON 宽度、ARM64EC shim、短缓冲/尾部守卫、
@@ -217,6 +222,10 @@ etl-generator  →  perf-sampling-parser  →  perf-optimizer
 PerfView + TraceEvent 及 speedscope 网页包，许可与署名见
 `skills/PROFILING-THIRD-PARTY-NOTICES.md`。
 
+符号解析默认采用**仅本地模式**：只搜索 ETL、目标程序、构建目录以及用户明确提供的 PDB 目录，
+忽略继承来的符号服务器配置。网络、UNC 或 HTTP 符号服务器必须得到用户明确同意，并传入
+`--allow-symbol-servers`。
+
 在相信一份剖析结果之前，有两点必须知道：
 
 - **PerfView 的 `run` 动作会在目标进程退出时停止采集**，因此无法直接剖析长期运行的服务进程。
@@ -234,6 +243,12 @@ PerfView + TraceEvent 及 speedscope 网页包，许可与署名见
 
 **Q：性能剖析必须用管理员权限吗？**
 只有 `etl-generator` 需要——内核 CPU 采样走 NT Kernel Logger。解析与报告环节不需要。
+完整编排流程启用性能剖析时，非管理员 agent 会暂停为 `PAUSED_NEEDS_ADMIN`；需要从管理员终端
+重新启动同一个 harness 后继续。该状态不能归档。
+
+**Q：EasyWoS 会自动安装缺失的技能或软件包吗？**
+不会。它会先报告完整的缺失依赖列表，只有获得明确批准后才会运行联网安装命令。若缺失的只是
+生成文件 `skills/combined-spec-summary.yaml`，会在本地重新生成，不会触发重装。
 
 **Q：一定要装 OpenSpec 吗？**
 不是必须。OpenSpec 用于变更编排与进度留档；不用它也能跑，见
@@ -317,16 +332,19 @@ easywos-skills/
 │   ├── jit-arm64ec-virtualalloc-fix-skill/  # ARM64EC JIT 代码页分配缺陷
 │   │
 │   │   # ── 性能剖析流水线（衡量移植效果）──
-│   └── profiling/
-│       ├── etl-generator/           # 在 PerfView CPU 采样下运行目标程序 → .etl
-│       ├── perf-sampling-parser/    # .etl → 按进程 CPU 排名 + SpeedScope 火焰图
-│       └── perf-optimizer/          # 火焰图 → 根因模块 + 源码缺口扫描 + HTML 报告
+│   ├── etl-generator/               # 在 PerfView CPU 采样下运行目标程序 → .etl
+│   ├── perf-sampling-parser/        # .etl → 按进程 CPU 排名 + SpeedScope 火焰图
+│   ├── perf-optimizer/              # 火焰图 → 根因模块 + 源码缺口扫描 + HTML 报告
 │   │
 │   │   # ── 编写 / 报告 ──
 │   ├── arm64-porting-report/        # 生成 EasyWoS 风格的移植 YAML
 │   ├── leaf-skill-creator/          # 脚手架生成新的叶子技能（含 spec.yaml）
 │   │
 │   └── combined-spec-summary.yaml   # 由脚本【生成】的全部叶子规格索引（已 gitignore）
+├── scripts/
+│   └── codex/                       # Codex 生命周期、分发证据与归档门禁
+├── tests/
+│   └── codex-lifecycle/             # Codex 生命周期回归测试
 └── README.md / USAGE.md / USAGE.zh-CN.md
 ```
 
@@ -345,7 +363,7 @@ easywos-skills/
   以及*用哪个配方*，并负责逐内核的验证→重试循环（`easywos-spec` §8）。它不包含迁移逻辑。
 - **叶子技能**承载迁移逻辑。每个技能持有一到多个*规格*——一份匹配用 `.yaml`
   （机器可读：匹配规则、x64/arm64 构造、陷阱、验证标准）和一份 `.md`（人/智能体可读的配方）。
-- **性能剖析**（`skillsthe profiling skills under /`）衡量移植后的二进制：采集 trace、按进程排 CPU、导出火焰图、
+- **性能剖析**（`etl-generator`、`perf-sampling-parser`、`perf-optimizer`）衡量移植后的二进制：采集 trace、按进程排 CPU、导出火焰图、
   将热点叶子归因到根因模块、扫描源码中"有 x64 SIMD 但无 NEON"的缺口。可独立使用（§7），
   也会被编排器的 §8.5 自动调用。
 
@@ -360,11 +378,11 @@ EasyWoS 扫描 YAML
 easywos-spec 编排器
    │  ② 预检     – 确认叶子技能齐备；重新生成 combined-spec-summary.yaml
    │  ②′ 拆解     – 整个 asm 文件 → 逐内核的分组子条目（§1.4）
-   │  ③ 脚本筛查 – spec_matcher.js：将每个条目的 x64 源码与所有规格做正则匹配
-   │  ④ LLM 精化 – 剔除误报、拆分 variant_group、给出置信度
+   │  ③ 脚本筛查 – 作用域匹配 + 源码行证据 + 输入/规格/脚本哈希
+   │  ④ LLM 精化 – 从原始候选中剔除误报、拆分 variant_group、给出置信度
    │  ▼
    <name>-matched.yaml      – 原扫描 + 每条目的 port_spec_ids 与 match_confidence
-   │  ⑤ tasks.md 生成 – 每个移植条目一条 /dispatcher-skill 命令
+   │  ⑤ tasks.md 生成 – 每个移植条目一条 dispatcher 指令
    ▼
 dispatcher-skill（逐条目）
    │  ⑥ 载入 porting_item + 解析规格 → 路由到叶子技能
@@ -374,7 +392,7 @@ dispatcher-skill（逐条目）
    │  ⑦′ 验证→重试循环 – 反馈文件 → 重新分发，最多 K 次（easywos-spec §8）
    ▼
 已验证的 ARM64 移植
-   │  ⑧ 对照【真实回退实现】做性能剖析（编排器 §8.5 / the profiling skills）
+   │  ⑧ 对照【真实回退实现】做性能剖析（编排器 §8.5 / 性能剖析技能）
    ▼
 既验证正确、又验证收益的 ARM64 移植
 ```
@@ -390,10 +408,12 @@ dispatcher-skill（逐条目）
 
 - 执行**依赖预检**（并重新生成规格索引——见 §11）；
 - 执行**脚本筛查**——`spec_matcher.js` 对每个条目已解析的源码做作用域分类，
-  并与每条规格的 `match_rules` 做正则匹配，输出候选列表；
+  并与每条规格的 `match_rules` 做正则匹配，输出候选列表；每个命中都带证据 id、源码文件/行号、
+  作用域、匹配模式和摘录，顶层还记录 matcher 脚本、扫描输入与合并规格索引的哈希；
 - 执行 **LLM 语义精化**——剔除作用域/语义误报、合并冗余规格、按 `target_feature` 拆分
   `variant_group` 条目，并给出 `port_spec_ids` 与 `match_confidence`
-  （high/medium/low；low → `[NEEDS REVIEW]`）；
+  （high/medium/low；low → `[NEEDS REVIEW]`）。精化只能从原始 matcher 候选中选择 id；
+  仅出现在精化 YAML 中、没有原始证据的规格不可追踪，会被拒绝；
 - 写出 **`<scan>-matched.yaml`**（逐条目增强后的扫描），再写出 **`tasks.md`**，
   其 "Dispatcher Execution" 段落里每个条目一条命令。
 
@@ -429,7 +449,8 @@ gtest 能逐内核覆盖的任务。所以匹配器会先把文件切成逐内�
 - **产出**：每组一个分组子条目，id 形如 `<parent_id>__<group>`，之后按普通条目筛查、
   分发与验证。
 
-**⑥ 分发。** tasks.md 中每一行都是一次 dispatcher 调用：
+**⑥ 分发。** tasks.md 中每一行都是一条 dispatcher 指令。下面的形式是 Claude Code 的
+slash-command 简写：
 
 ```bash
 # 已匹配条目（一个或多个规格）
@@ -442,6 +463,11 @@ dispatcher 载入移植条目，通过 `combined-spec-summary.yaml` 把每个规
 叶子技能与文件，载入该配方并完成路由（多规格合并、跨来源主规格选择，或兜底到 baseline）。
 它自身不含任何迁移逻辑。
 
+在 Codex 中，不要把 slash 行当作原生命令执行，而应把它视为带有同样参数的任务指令。
+端到端生命周期运行时，先由 `scripts/codex/dispatcher-adapter.js prepare` 验证原始 matcher
+证据并生成分发请求；叶子技能产出结果后，再用 `record-result` 记录 producer session、
+产物/补丁哈希、测试和反馈链。adapter 负责让分发可审计，但不会从 Node 中直接调用技能。
+
 **⑦ 验证。** 叶子技能产出 ARM64 源码后，单元测试流程会生成 gtest 固件（每条目一个）、
 一层纯 C ABI 测试接缝、CMake 以及构建/运行脚本。两条流程——intrinsics
 （`references/unit-test-workflow-intrinsics.md`）与汇编（`references/unit-test-workflow.md`）
@@ -453,13 +479,30 @@ dispatcher 载入移植条目，通过 `combined-spec-summary.yaml` 把每个规
 **⑦′ 失败后重试。** 失败的条目不会被丢下。`easywos-spec` §8 负责逐条目的
 **验证→重试循环**：写出一份描述失败原因的反馈文件，带 `--feedback` 把该条目重新分发给同一个
 叶子技能，最多重试到预算上限。用尽预算的条目标记为待人工复核，且**不会**阻塞整批的其余条目。
-这个循环也有一个脚本化驱动：`skills/easywos-spec/references/port-loop.workflow.js`，
-输入一份 matched YAML 加一条构建命令，即可对所有条目跑
-分发 → 构建 → 负控制 + gtest → 反馈重试（传 `dryRun: true` 只打印命令、不改动任何文件）。
+对于带 Workflow runtime 的 Claude Code，脚本化驱动
+`skills/easywos-spec/references/port-loop.workflow.js` 输入一份 matched YAML 加一条构建命令，
+即可对所有条目跑分发 → 构建 → 负控制 + gtest → 反馈重试（传 `dryRun: true` 只打印命令、
+不改动任何文件）。不要直接用 Node 运行这个 Workflow scriptlet；Codex 使用
+`scripts/codex/` 下的确定性驱动器。
 
 **⑧ 度量。** 正确性不是全部门槛：一个移植可以完全正确、却比它替换掉的代码**更慢**。
 编排器 §8.5 会剖析热点叶子、优化、重新验证，并（在真实移植中）把每条确认的经验回写进叶子规格。
 对比基线必须是**真实的回退构建**，不是自己手写的朴素实现。
+
+**按宿主区分生命周期与归档。** 两种实现必须保持独立：
+
+- **Claude Code + Workflow** 使用 Workflow 驱动器和 `.orchestrator-state.yaml`，再通过其
+  OpenSpec Workflow 归档；不调用 `scripts/codex/*`。
+- **Codex** 使用 `scripts/codex/lifecycle-driver.js` 初始化并推进
+  `LIFECYCLE-STATE.yaml`，通过 `dispatcher-adapter.js` 记录分发证据，并在归档前通过严格门禁：
+
+  ```bash
+  node scripts/codex/archive-gate.js --change openspec/changes/<change> --strict
+  ```
+
+  门禁会拒绝过期的 matcher 哈希、缺失的构建/测试证据、零测试运行、缺失的负控制、复用的
+  producer/verifier 身份、不完整的性能终态或未登记的产物。只有 `ARCHIVE_READY` 才能进入
+  OpenSpec archive。
 
 ---
 
@@ -510,6 +553,13 @@ skills/<leaf-skill>/
 ## 13. 约定与陷阱
 
 - **`combined-spec-summary.yaml` 是生成物**——绝不手改；规格变更后重新生成。
+- **安装依赖必须获得批准。** 在运行 `npx skills add` 或其他联网安装命令之前，先完整报告
+  缺失的技能或脚本。本地重新生成合并规格索引不需要安装。
+- **matcher 来源证据不可缺失。** 被选中的规格 id 必须存在于原始 matcher 输出中，并带有具体
+  源码证据；LLM 精化不能凭空增加新 id，Codex 的 dispatcher/archive 门禁也会拒绝不可追踪或
+  已过期的输入。
+- **不要混用生命周期实现。** Claude Workflow 使用 `.orchestrator-state.yaml`；Codex 使用
+  `LIFECYCLE-STATE.yaml` 和 `scripts/codex/*`。
 - **匹配规则针对 x86 源码。** 即使某条规格的目的是性能/产出层面的模式，它仍然需要一个
   x86 源码侧的触发条件，否则会匹配到零个条目。
 - **内联汇编走规格路由。** ARM64 内联汇编内核通过正常流水线匹配（匹配器作用域 `inline_asm`）；
@@ -530,6 +580,8 @@ skills/<leaf-skill>/
   因此仅凭 `#if defined(_MSC_VER)` 无法识别真正的 MSVC。参见 `arm64-baseline-porting`。
 - **短缓冲守卫。** 固定步长的 SIMD 内核必须在任何无条件向量加载之前判断 `len < STRIDE`，
   否则短输入会越界读取、或让 `size_t` 下溢 → 段错误。
+- **符号默认只从本地解析。** ETL 解析期间不要继承或访问符号服务器；只有用户明确同意并传入
+  `--allow-symbol-servers` 后才能启用。
 - **不要收窄并行宽度。** "保留语义，而非汇编外观"这条规则免除的是汇编的*文本形式*，
   不是它每次迭代处理的数据量。把 N 宽的内核移植成一次处理一项，可以完全正确，
   却仍然输给编译器优化后的标量 C——而这类缺陷任何正确性检查都发现不了。
@@ -543,10 +595,12 @@ skills/<leaf-skill>/
   以及 `references/demo-without-openspec.md`。
 - **输出格式与模板：** `skills/easywos-spec/references/`
   （`matched-yaml-example.md`、`script-output-format.md`，以及 CMake / 构建脚本 /
-  单元测试流程模板，还有 `port-loop.workflow.js`——脚本化的验证→重试驱动）。
+  单元测试流程模板，还有 `port-loop.workflow.js`——Claude Workflow 的验证→重试驱动）。
 - **编排契约：** `skills/easywos-spec/SKILL.md`（流水线）与
   `skills/dispatcher-skill/SKILL.md`（路由协议）。
 - **外层循环与性能循环：** `skills/arm64-port-orchestrator/references/`
   （`outer-loop.md`、`perf-optimize-loop.md`、`build-test-detection.md`、
-  `verification-measurement-discipline.md`）。
+  `verification-measurement-discipline.md`、`codex-lifecycle.md`）。
+- **Codex 可执行生命周期：** `scripts/codex/` 与 `CODEX-LIFECYCLE-HARDENING.md`
+  （状态推进、分发证据、严格归档门禁）。
 - **性能剖析：** `skills/PROFILING-README.md`。

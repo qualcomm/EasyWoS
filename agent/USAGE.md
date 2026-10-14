@@ -141,9 +141,10 @@ skill content is Markdown and YAML and binds to no particular model API.
 
 ## 4. Install
 
-The skills are loaded from a Claude Code skills directory. This repo now lives
-as a subdirectory inside the `qualcomm/EasyWoS` repo, at `agent/` (i.e.
-`agent/skills/...`), so install with a subpath pointing at that directory.
+The skills are loaded by supported agent harnesses (Claude Code, Codex, and
+other agents supported by the installer). This repo lives as a subdirectory
+inside the `qualcomm/EasyWoS` repo, at `agent/` (i.e. `agent/skills/...`), so
+install with a subpath pointing at that directory.
 `--all` installs every skill to every detected agent without the per-skill
 confirmation prompts:
 
@@ -171,23 +172,25 @@ Re-run after the repo updates to pick up new/changed specs.
 | Running the pipeline scripts | Node.js (the `scripts/` use `js-yaml`; `npm install` in `skills/easywos-spec/scripts/`) |
 | Orchestration with OpenSpec | OpenSpec CLI (`openspec`), and the activation rule wired in `openspec/config.yaml` |
 | Building/verifying ARM64 output | A native ARM64 host (Windows on ARM, or aarch64 Linux), MSVC ARM64 toolchain (VS 2019+) or GCC/Clang, CMake 3.14+ |
-| Profiling (`skillsthe profiling skills under /`) | Python 3.8+; an **elevated shell** for `etl-generator` only (kernel CPU sampling needs the NT Kernel Logger); Node.js to serve the interactive flame graph |
+| Profiling (`etl-generator`, `perf-sampling-parser`, `perf-optimizer`) | Python 3.8+; an **elevated shell** for `etl-generator` only (kernel CPU sampling needs the NT Kernel Logger); Node.js to serve the interactive flame graph |
 
 ---
 
 ## 5. Quick start — port a whole project
 
 You interact with EasyWoS by **talking to the agent**, not by running scripts (the
-scripts in §11 exist for debugging). One command drives everything — scan, plan,
-port, verify, integrate, build, run the project's own tests, fix, profile,
-archive:
+scripts in §11 exist for debugging). One request to **easywos-skills** drives
+everything — scan, plan, port, verify, integrate, build, run the project's own
+tests, fix, profile, archive:
 
-```
-/arm64-port-orchestrator C:/src/my-project
+```text
+Use easywos-skills to port C:/src/my-project to ARM64 end to end.
 ```
 
-That is the whole invocation. Everything beyond it is optional tuning, documented
-in the skill's own §0.
+That is the whole invocation on Codex, Claude Code, or another supported agent.
+The agent selects the internal orchestration skills automatically; users do not
+need to know their names. Optional build/test commands, profiling workload, and
+autonomy preferences can be included in the same request.
 
 - **End-to-end execution** follows the flow below, with no human intervention
   needed unless it hits something it cannot judge on its own.
@@ -200,7 +203,10 @@ in the skill's own §0.
   build/test command, a loop that will not converge. Those stops are **not
   suppressible**, because guessing there produces a plausible-looking wrong port.
   If a run is interrupted, it can resume from the phase it reached — progress is
-  recorded under `openspec/changes/<change-name>/`.
+  recorded under `openspec/changes/<change-name>/`. Claude Workflow runs use
+  `.orchestrator-state.yaml`; Codex runs use the evidence-backed
+  `LIFECYCLE-STATE.yaml` maintained by `scripts/codex/lifecycle-driver.js`. Do not
+  mix the two state mechanisms.
 
 **What the user needs to supply:** the pipeline is autonomous about method, but it
 will not guess at facts it cannot observe. Have these ready, or expect to be asked:
@@ -222,7 +228,9 @@ profile a binary (§7).
 ## 6. Using a single skill directly (without the full pipeline)
 
 You don't have to run the whole pipeline. Each skill is independently useful —
-just describe the task and the matching skill activates:
+just describe the task and the matching skill activates. On Codex, prefix the
+prompt with `$skill-name` when you want to select one explicitly; natural-language
+auto-selection remains available:
 
 - *"Port this SSE kernel to NEON"* → `sse-avx-to-neon` / `intrinsics-x64-to-arm64`
 - *"Translate this MASM .asm to AArch64"* → `asm-x64-to-arm64`
@@ -230,7 +238,7 @@ just describe the task and the matching skill activates:
 - *"Add ARM64 support to this CMake/VS project"* → `enable-windows-arm64`
 - *"Generate an ARM64 porting report for this repo"* → `arm64-porting-report`
 - *"This ARM64EC JIT is allocating code pages wrong"* → `jit-arm64ec-virtualalloc-fix-skill`
-- *"Profile this program and tell me where the CPU goes"* → `skillsthe profiling skills under /` (see §7)
+- *"Profile this program and tell me where the CPU goes"* → `etl-generator` / `perf-sampling-parser` / `perf-optimizer` (see §7)
 
 When no specific spec matches, `arm64-baseline-porting` supplies the mandatory
 ARM64 invariants (Windows ARM64 ABI, weak memory ordering, 128-bit NEON width,
@@ -258,6 +266,11 @@ etl-generator  →  perf-sampling-parser  →  perf-optimizer
 share the bundled `PerfView.exe`. The suite vendors PerfView + TraceEvent and a
 speedscope web bundle — see `skills/PROFILING-THIRD-PARTY-NOTICES.md`.
 
+Symbol resolution is **local-only by default**: the parser searches the ETL,
+target, build, and explicitly supplied PDB directories, and ignores inherited
+symbol servers. Network, UNC, or HTTP symbol servers require explicit user opt-in
+and `--allow-symbol-servers`.
+
 Two things worth knowing before trusting a profile:
 
 - **PerfView's `run` verb stops when the target exits**, so a long-running server
@@ -279,7 +292,15 @@ just can't get the "verified" conclusion.
 
 **Q: Does profiling require admin rights?**
 Only `etl-generator` does — kernel CPU sampling goes through the NT Kernel Logger.
-Parsing and reporting don't.
+Parsing and reporting don't. When profiling is enabled in the full orchestrator,
+a non-elevated agent session pauses as `PAUSED_NEEDS_ADMIN`; restart the same
+harness from an elevated terminal and resume. That state is not archivable.
+
+**Q: Will EasyWoS automatically install missing skills or packages?**
+No. It reports the complete missing dependency set first and asks for explicit
+approval before running any network-backed install command. A missing generated
+`skills/combined-spec-summary.yaml` is regenerated locally instead of triggering
+a reinstall.
 
 **Q: Is OpenSpec required?**
 No. OpenSpec orchestrates changes and records progress; you can run without it —
@@ -385,6 +406,10 @@ easywos-skills/
 │   ├── leaf-skill-creator/          # scaffold a new leaf skill (+ spec.yaml)
 │   │
 │   └── combined-spec-summary.yaml   # GENERATED index of all leaf specs (gitignored)
+├── scripts/
+│   └── codex/                       # Codex lifecycle, dispatch evidence, archive gate
+├── tests/
+│   └── codex-lifecycle/             # Codex lifecycle regression tests
 └── README.md / USAGE.md / USAGE.zh-CN.md
 ```
 
@@ -410,7 +435,7 @@ roles:
 - **Leaf skills** own the migration logic. Each holds one or more *specs* — a
   matched `.yaml` (machine-readable: match rules, x64/arm64 constructs,
   pitfalls, validation) and a `.md` (the human/agent-readable recipe).
-- **Profiling** (`skillsthe profiling skills under /`) measures the ported binary: capture a
+- **Profiling** (`etl-generator`, `perf-sampling-parser`, `perf-optimizer`) measures the ported binary: capture a
   trace, rank CPU by process, export a flame graph, attribute hot leaves to a
   root-cause module, and scan the source for x64-SIMD-without-NEON gaps. Usable
   standalone (§7), and invoked automatically by the orchestrator's §8.5.
@@ -426,11 +451,11 @@ EasyWoS scan YAML
 easywos-spec orchestrator
    │  ② preflight   – verify leaf skills present; regenerate combined-spec-summary.yaml
    │  ②′ decomposition – whole asm file → per-kernel group children (§1.4)
-   │  ③ script screening   – spec_matcher.js: regex-match each item's x64 source vs every spec
-   │  ④ LLM refinement     – prune false positives, split variant_groups, assign confidence
+   │  ③ script screening   – scope-aware match + source-line evidence + input/spec/script hashes
+   │  ④ LLM refinement     – prune raw candidates, split variant_groups, assign confidence
    │  ▼
    <name>-matched.yaml      – original scan + port_spec_ids + match_confidence per item
-   │  ⑤ tasks.md generation – one /dispatcher-skill command per porting item
+   │  ⑤ tasks.md generation – one dispatcher instruction per porting item
    ▼
 dispatcher-skill (per item)
    │  ⑥ load porting_item + resolve specs → route to leaf skill(s)
@@ -440,7 +465,7 @@ leaf skill  → ARM64 source output (C/intrinsics or .asm)
    │  ⑦′ verify→retry loop – feedback file → re-dispatch, ≤K attempts (easywos-spec §8)
    ▼
 verified ARM64 port
-   │  ⑧ profile against the REAL fallback (orchestrator §8.5 / the profiling skills)
+   │  ⑧ profile against the REAL fallback (orchestrator §8.5 / profiling skills)
    ▼
 verified AND measured ARM64 port
 ```
@@ -460,11 +485,14 @@ hot kernels into `porting_items` with `file_path`, `code_range`, `semantics`,
   see §11);
 - runs **script screening** — `spec_matcher.js` scope-classifies each item's
   resolved source and regex-matches it against every spec's `match_rules`,
-  emitting a candidate list;
+  emitting a candidate list with concrete evidence ids, source files/lines,
+  scopes, patterns, excerpts, and hashes of the matcher script, scan, and combined
+  spec index;
 - performs **LLM semantic refinement** — drops scope/semantic false positives,
   collapses redundant specs, splits `variant_group` items by `target_feature`,
   and assigns `port_spec_ids` + `match_confidence` (high/medium/low; low →
-  `[NEEDS REVIEW]`);
+  `[NEEDS REVIEW]`). Refinement may select only ids present in the raw matcher
+  output; a spec introduced only in the refined YAML is untraceable and rejected;
 - writes **`<scan>-matched.yaml`** (the scan augmented per item), then a
   **`tasks.md`** whose "Dispatcher Execution" section has one command per item.
 
@@ -505,7 +533,8 @@ the matcher first splits the file into per-kernel groups (`easywos-spec` §1.4):
 - **Emits** one group child per group, id `<parent_id>__<group>`, each screened,
   dispatched and verified as an ordinary item.
 
-**⑥ Dispatch.** Each tasks.md line is a dispatcher invocation:
+**⑥ Dispatch.** Each tasks.md line is a dispatcher instruction. The forms below
+are Claude Code slash-command shorthand:
 
 ```bash
 # matched item (one or more specs)
@@ -518,6 +547,14 @@ The dispatcher loads the porting item, resolves each spec id via
 `combined-spec-summary.yaml` to its leaf skill + file, loads that recipe, and
 routes (multi-spec merge, cross-source primary selection, or baseline fallback).
 It contains no migration logic itself.
+
+On Codex, do not try to execute the slash line as a native command. Treat it as
+an instruction with the same arguments. In an end-to-end lifecycle run,
+`scripts/codex/dispatcher-adapter.js prepare` validates the raw matcher evidence
+and writes the dispatch request; after the selected leaf skill produces the
+result, `record-result` records the producer session, output/patch hashes, tests,
+and feedback chain. The adapter makes dispatch auditable; it does not call a skill
+from Node.
 
 **⑦ Verify.** After the leaf skills emit ARM64 source, the unit-test workflow
 generates gtest fixtures (one per item), a clean-C-ABI test seam, CMake, and a
@@ -533,17 +570,37 @@ that were never shown red are treated as unverified.
 per-item **verify→retry loop**: it writes a feedback file describing the failure,
 re-dispatches the item to the same leaf skill with `--feedback`, and repeats up to
 a retry budget. An item that exhausts the budget is marked for review and does
-**not** block the rest of the batch. There is also a scripted driver for this loop
-at `skills/easywos-spec/references/port-loop.workflow.js`, which takes a matched
-YAML plus a build command and runs dispatch → build → negative-control + gtest →
-feedback retry across all items (`dryRun: true` prints commands without mutating
-anything).
+**not** block the rest of the batch. For Claude Code with the Workflow runtime,
+the scripted driver at `skills/easywos-spec/references/port-loop.workflow.js`
+takes a matched YAML plus a build command and runs dispatch → build →
+negative-control + gtest → feedback retry across all items (`dryRun: true` prints
+commands without mutating anything). Do not run this Workflow scriptlet directly
+with Node. Codex uses the deterministic drivers under `scripts/codex/` instead.
 
 **⑧ Measure.** Correctness is not the whole bar: a port can be perfectly correct
 and *slower* than the code it replaced. The orchestrator's §8.5 profiles the hot
 leaves, optimizes, re-verifies, and (on real ports) captures each confirmed
 lesson back into a leaf spec. Compare against the **real fallback build**, not a
 hand-written baseline.
+
+**Harness-specific lifecycle and archive.** Keep the host implementations
+separate:
+
+- **Claude Code + Workflow** uses the Workflow drivers and
+  `.orchestrator-state.yaml`, then archives through its OpenSpec workflow. It does
+  not invoke `scripts/codex/*`.
+- **Codex** initializes and advances `LIFECYCLE-STATE.yaml` with
+  `scripts/codex/lifecycle-driver.js`, records dispatch evidence with
+  `dispatcher-adapter.js`, and must pass the strict final gate before archive:
+
+  ```bash
+  node scripts/codex/archive-gate.js --change openspec/changes/<change> --strict
+  ```
+
+  The gate rejects stale matcher hashes, missing build/test evidence, zero-test
+  runs, missing negative controls, reused producer/verifier identity, incomplete
+  performance states, or unrecorded artifacts. Only `ARCHIVE_READY` may proceed
+  to OpenSpec archive.
 
 ---
 
@@ -602,6 +659,15 @@ always-loaded discipline section, not buried in one leaf.
 
 - **`combined-spec-summary.yaml` is generated** — never edit by hand; regenerate
   after spec changes.
+- **Dependency installation requires approval.** Report all missing skills or
+  scripts before running `npx skills add` or another network-backed installer.
+  Regenerating the local combined spec index does not require an install.
+- **Matcher provenance is mandatory.** A selected spec id must exist in the raw
+  matcher output with concrete source evidence; LLM refinement cannot invent a
+  new id, and Codex's dispatcher/archive gates reject untraceable or stale input.
+- **Do not mix lifecycle implementations.** Claude Workflow owns
+  `.orchestrator-state.yaml`; Codex owns `LIFECYCLE-STATE.yaml` and
+  `scripts/codex/*`.
 - **Match rules target x86 source.** If a spec's purpose is a performance/output
   pattern, it still needs an x86-source trigger or it will match zero items.
 - **Inline asm is spec-routed.** ARM64 inline-asm kernels match through the normal
@@ -630,6 +696,9 @@ always-loaded discipline section, not buried in one leaf.
 - **Short-buffer guards.** Fixed-stride SIMD kernels must guard `len < STRIDE`
   before any unconditional vector load, or short inputs read OOB / underflow
   `size_t` → segfault.
+- **Symbols are local-only by default.** Do not inherit or contact symbol servers
+  during ETL parsing unless the user explicitly opts in and
+  `--allow-symbol-servers` is passed.
 - **Don't narrow the parallelism width.** "Preserve semantics, not assembly
   appearance" frees you from the asm's *textual form*, not from how much data it
   processes per iteration. A one-item-at-a-time port of an N-wide kernel can be
@@ -645,11 +714,14 @@ always-loaded discipline section, not buried in one leaf.
   and `references/demo-without-openspec.md`.
 - **Output formats & templates:** `skills/easywos-spec/references/`
   (`matched-yaml-example.md`, `script-output-format.md`, CMake / build-script /
-  unit-test workflow templates, and `port-loop.workflow.js` — the scripted
-  verify→retry driver).
+  unit-test workflow templates, and `port-loop.workflow.js` — the Claude
+  Workflow verify→retry driver).
 - **Orchestration contracts:** `skills/easywos-spec/SKILL.md` (pipeline) and
   `skills/dispatcher-skill/SKILL.md` (routing protocol).
 - **Outer + performance loops:** `skills/arm64-port-orchestrator/references/`
   (`outer-loop.md`, `perf-optimize-loop.md`, `build-test-detection.md`,
-  `verification-measurement-discipline.md`).
+  `verification-measurement-discipline.md`, `codex-lifecycle.md`).
+- **Codex executable lifecycle:** `scripts/codex/` and
+  `CODEX-LIFECYCLE-HARDENING.md` (state transitions, dispatch evidence, strict
+  archive gate).
 - **Profiling:** `skills/PROFILING-README.md`.

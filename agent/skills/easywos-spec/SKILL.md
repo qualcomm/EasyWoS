@@ -288,8 +288,20 @@ The script performs:
    rule's `pattern` ONLY against lines classified under the rule's declared `scope`.
    If scope is not specified, match against all non-comment lines.
 
+   A source line may carry multiple scopes. For example, a declaration that
+   calls `_mm_movemask_epi8` is simultaneously `declaration`,
+   `intrinsic_call`, `function_call`, and `expression`; no priority ordering may
+   hide the intrinsic match.
+
+   Specs that require context use `metadata.match_groups` with `all_of`,
+   `any_of`, and optional `none_of`. Use this for architecture-sensitive
+   constructs such as inline asm; a shared GNU constraint such as `"=r"` is not
+   sufficient evidence of ARM64 by itself.
+
 3. **Candidate list output**: For each porting_item, output all specs whose
-   match_rules produced at least one hit, along with `rules_hit` count.
+   rules produced a hit, along with `rules_hit` and concrete evidence records:
+   evidence id, original file, original line, scopes, pattern, and excerpt.
+   Preserve matcher input/spec/script hashes in the top-level `matcher` object.
 
 ### 2.3 Script output format
 
@@ -523,6 +535,24 @@ After all dispatcher invocation tasks, append a "Verification" section to tasks.
 - [ ] V.4 Build ARM64: `cmake -S . -B build -A ARM64 && cmake --build build --config Release`
 - [ ] V.5 Run tests: execute the gtest binary and verify all tests pass
 - [ ] V.6 Per-item verify → retry loop: for any fixture that fails at V.5, write a feedback file and re-dispatch that item with `--feedback` (see Section 8). Retry up to K times; on exhaustion mark the item `[NEEDS REVIEW]` and continue. Only items whose fixtures are green (and were shown red at V.0) are `[x]` done.
+- [ ] V.7 Build and run the complete project's x64 baseline; record command evidence and a non-zero discovered-test count
+- [ ] V.8 Build and run the complete ARM64 project; record command evidence and the same source-tree fingerprint
+- [ ] V.9 Complete performance phase: `CONVERGED`, profiler-backed `STALLED`, or explicit-user `SKIPPED_BY_USER`
+- [ ] V.10 Complete independent verifier record with a different session id and the same patch hash
+```
+
+Append exactly one host-specific V.11 task; never emit both:
+
+**Claude Code with Workflow:**
+
+```markdown
+- [ ] V.11 (Claude Code/Workflow) Confirm the outer and performance Workflow drivers reached archivable terminal states and recorded their evidence in `.orchestrator-state.yaml` and the progress logs; then archive with `openspec-archive-change` / `opsx:archive`. Do not invoke `scripts/codex/*` and do not require `LIFECYCLE-STATE.yaml`.
+```
+
+**Codex:**
+
+```markdown
+- [ ] V.11 (Codex) Run `node <easywos-plugin-root>/scripts/codex/archive-gate.js --change openspec/changes/<change> --strict`; archive only after it advances `LIFECYCLE-STATE.yaml` to `ARCHIVE_READY`.
 ```
 
 > V.0 runs before V.4/V.5 in trust order even though the numbering places it

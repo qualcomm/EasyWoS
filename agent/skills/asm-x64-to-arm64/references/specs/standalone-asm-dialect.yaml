@@ -34,7 +34,7 @@ specs:
     arm64_constructs:
       - .text
       - .section .rdata
-      - '.section .text.hotloop, "ax"' + .balign 64
+      - ".section .text.hotloop, \"ax\" + .balign 64"
     pitfalls:
       - .code and .text look interchangeable but the MASM version implies more (default alignment, calling conventions); always add explicit .balign if the original was aligned
     validation_criteria:

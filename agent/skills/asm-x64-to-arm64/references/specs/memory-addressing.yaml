@@ -164,7 +164,7 @@ specs:
       - Far symbols (>±4 GB) require GOT indirection; pure adrp+add fails at link time
     validation_criteria:
       - "All [rip + symbol] patterns become adrp + (add for address, ldr for value)"
-      - GOT-indirect symbols use :got: / :got_lo12: relocations
+      - "GOT-indirect symbols use :got: / :got_lo12: relocations"
 
   - id: 7
     name: pre-post-indexed-addressing

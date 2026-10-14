@@ -256,13 +256,21 @@ specs:
       _mm_unpacklo / _mm_unpackhi map cleanly to vzip1q / vzip2q (AArch64) or
       vzipq + lane select (ARMv7). _mm_shuffle_epi32 has no direct NEON
       equivalent — use __builtin_shufflevector or manual lane extract/insert.
-      _mm_blendv* maps to vbslq with mask vector.
+      _mm_blendv* maps to vbslq with mask vector. _mm_alignr_epi8(hi, lo, n)
+      (the 128-bit PALIGNR intrinsic) maps exactly to vextq_u8(lo, hi, n) —
+      note the operand order is REVERSED relative to the x86 intrinsic.
     metadata:
       match_rules:
         - pattern: "_mm_shuffle_(epi32|epi8|ps|pd)"
           type: regex
           scope: intrinsic_call
           description: SSE shuffle intrinsics (immediate or variable)
+        - pattern: "_mm(256)?_alignr_epi8"
+          type: regex
+          scope: intrinsic_call
+          description: >
+            SSSE3/AVX2 byte-align (PALIGNR) intrinsic — concatenate two vectors
+            and extract a shifted window; the direct NEON analogue is vextq_*
         - pattern: "_mm_shuffle(lo|hi)_epi16"
           type: regex
           scope: intrinsic_call
@@ -281,22 +289,44 @@ specs:
       - _mm_blend_epi16(a, b, mask)
       - _mm_blendv_epi8(a, b, mask)
       - _mm_blendv_ps(a, b, mask)
+      - _mm_alignr_epi8(hi, lo, imm8)
+      - _mm256_alignr_epi8(hi, lo, imm8)
     arm64_constructs:
-      - "__builtin_shufflevector for compile-time shuffles"
+      - "__builtin_shufflevector for compile-time shuffles (clang/gcc only — not MSVC)"
       - "vsetq_lane / vgetq_lane manual sequence for arbitrary shuffles"
       - vzip1q_s8 / vzip2q_s32 (AArch64) or vzipq_s8 + lo/hi pick (ARMv7)
       - "vcombine_s64(vget_low_s64(a), vget_low_s64(b)) for unpacklo_epi64"
       - "vbslq_s8(mask, b, a) for blendv (note operand order: mask, true, false)"
       - "vbslq_f32(vreinterpretq_u32_f32(mask), b, a) for float blendv"
+      - "vextq_u8(lo, hi, n) for _mm_alignr_epi8(hi, lo, n) — operands reversed"
+      - "vextq_u64(lo, hi, 1) for the common 8-byte alignr on 64-bit lanes"
+      - "vqtbl1q_u8(v, table) for byte-granular _mm_shuffle_epi8 (MSVC-safe)"
+      - "vrev64q_u32(v) for _mm_shuffle_epi32(v, _MM_SHUFFLE(2,3,0,1)) (32-bit halves swapped within each 64-bit lane)"
     pitfalls:
       - vbslq operand order is (mask, true_value, false_value) — easy to mix up
       - Float blendv requires reinterpret of mask to uint32x4_t
       - Arbitrary _mm_shuffle_epi32 has no single NEON equivalent — fall back to lane-by-lane
       - vzip1q / vzip2q require AArch64; ARMv7 must use vzipq + half pick
+      - >-
+        vextq_* operand order is REVERSED relative to _mm_alignr_epi8: the x86
+        intrinsic takes (hi, lo, n) but vextq takes (lo, hi, n). Swapping them
+        silently produces a valid-looking but wrong permutation, so verify
+        lane-by-lane rather than by inspection.
+      - >-
+        vextq_*'s index is in ELEMENTS of the chosen lane type, not bytes:
+        _mm_alignr_epi8(hi, lo, 8) is vextq_u8(lo, hi, 8) but also
+        vextq_u64(lo, hi, 1). Mixing the unit up by lane width is a common bug.
+      - >-
+        __builtin_shufflevector is a clang/gcc extension and is NOT available
+        under MSVC (_M_ARM64 / _M_ARM64EC). For MSVC-targeted ports use
+        vqtbl1q_u8 with an explicit byte-index table, vrev*/vextq/vzip*
+        instructions, or vsetq_lane/vgetq_lane sequences instead.
     validation_criteria:
       - unpack maps to vzip1q / vzip2q (or vzipq on ARMv7)
       - blendv maps to vbslq with correct (mask, true, false) operand order
       - Arbitrary shuffles use __builtin_shufflevector or manual lane sequence
+      - _mm_alignr_epi8(hi, lo, n) maps to vextq_*(lo, hi, n) with operands swapped
+      - MSVC-targeted output contains no __builtin_shufflevector
 
   - id: 8
     name: conversion-and-cast

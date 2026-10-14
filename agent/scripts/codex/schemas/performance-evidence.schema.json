@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easywos.local/schemas/performance-evidence.schema.json",
+  "title": "EasyWoS performance terminal evidence",
+  "type": "object",
+  "required": ["schema_version", "status"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "status": { "enum": ["CONVERGED", "STALLED", "SKIPPED_BY_USER"] },
+    "profiler_ran": { "type": "boolean" },
+    "user_explicit_no_profile": { "type": "boolean" },
+    "baseline_etl": { "type": "string" },
+    "baseline_speedscope": { "type": "string" },
+    "perf_progress": { "type": "string" },
+    "blocker": { "type": "string" },
+    "optimization_performed": { "type": "boolean" },
+    "accepted_optimizations": { "type": "integer", "minimum": 0 },
+    "optimized_etl": { "type": "string" },
+    "optimized_speedscope": { "type": "string" },
+    "paired_benchmark": { "type": "string" },
+    "checksums": { "type": "string" },
+    "work_checksums_match": { "type": "boolean" }
+  },
+  "additionalProperties": true
+}

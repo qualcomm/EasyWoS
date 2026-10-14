@@ -383,6 +383,8 @@ This file is read by the archive gate and the final report; be concise and faith
 
 return {
   status: outcome.status,                    // CONVERGED | PAUSED_NEEDS_ADMIN | STALL
+  lifecycleStatus: outcome.status === 'STALL' ? 'STALLED' : outcome.status,
+  archivable: outcome.status === 'CONVERGED' || outcome.status === 'STALL',
   reason: outcome.reason || null,
   iterations: history.length,
   acceptedOptimizations: accepted,           // correct + measurably faster, with technique + speedup

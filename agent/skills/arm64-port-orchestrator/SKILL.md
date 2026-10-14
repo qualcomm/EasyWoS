@@ -7,7 +7,7 @@ description: >-
   wiring the ported kernels into the project's real build, building the WHOLE
   project for ARM64, running the project's OWN test/bench suites, an auto-fix
   loop over integrated build/test failures, and OpenSpec archive on green. Use
-  when the user wants to "port <project> to ARM64 end to end", "automate the
+  when the user wants to port a project to ARM64 end to end, "automate the
   whole openspec-to-build-and-test loop", "loop engineering for arm64 porting",
   or hand a project directory and ask for a hands-off ARM64 port. It is the
   layer ABOVE easywos-spec: it invokes easywos-spec, dispatcher-skill,
@@ -288,10 +288,20 @@ the surface syntax differs. Do not assume a slash-command runtime exists.
 | `--autonomy hands-off \| checkpoint` | No | `checkpoint` | `hands-off` runs all phases without pausing; `checkpoint` pauses for confirmation at the phase gates in §1.3. |
 | `--resume-from <phase>` | No | — | Skip to a phase (`propose`/`apply`/`integrate`/`build`/`perf`/`archive`) when re-running after an interruption; earlier phases are assumed complete and verified. |
 
-**State file.** The orchestrator maintains `openspec/changes/<change-name>/.orchestrator-state.yaml`
-recording the phase reached, the matched-YAML path, the build/test commands, and
-the outer-loop history. It is the resume anchor for `--resume-from` and the
-audit trail; update it at every phase boundary.
+**State file (host-specific; do not mix the two paths).**
+
+- **Claude Code with the Workflow runtime:** keep the original
+  `openspec/changes/<change-name>/.orchestrator-state.yaml` as the authoritative
+  resume and audit state. The Workflow drivers own phase transitions and archive
+  readiness. Do not initialize `LIFECYCLE-STATE.yaml` and do not invoke anything
+  under `scripts/codex/`. If Workflow is disabled, stop and enable it rather than
+  silently switching lifecycle implementations.
+- **Codex:** initialize and maintain
+  `openspec/changes/<change-name>/LIFECYCLE-STATE.yaml` with
+  `scripts/codex/lifecycle-driver.js`. It is the authoritative resume anchor and
+  evidence index; `--resume-from` never overrides missing or stale evidence.
+  Read [references/codex-lifecycle.md](references/codex-lifecycle.md) before a
+  Codex run.
 
 ### 0.1 Harness compatibility — subagents, OpenSpec, and parallelism (READ before running on Codex)
 
@@ -303,7 +313,7 @@ primitive stop the run:
 | Claude Code term used below | What it means | Codex / generic equivalent |
 |---|---|---|
 | **"Spawn a subagent"** (as a leaf skill / fixer / verifier) | delegate a bounded task to a fresh agent context | Codex has no `Task`-tool subagent. Either **do the step in-context** by loading the relevant leaf skill's SKILL.md and following it, or use Codex's own delegation/agent mechanism if configured. The requirement is only that the *port/fix is produced by following the leaf skill's spec-driven guidance*, not that a separate agent process exists. |
-| **`Workflow({scriptPath,args})`** | run a deterministic driver **scriptlet** in the Workflow runtime (it relies on injected `args`/`agent`/`parallel`/`log`/`phase` + top-level await) | Codex has no Workflow runtime, so the driver files are **not** runnable with plain `node`. Instead **enact the same deterministic algorithm** they encode — the spec is in `references/outer-loop.md` / `references/perf-optimize-loop.md` — using Codex's own tools. The control flow (code owns "loop again vs stop") is what must be preserved (see §7.2). |
+| **`Workflow({scriptPath,args})`** | run a deterministic driver **scriptlet** in the Workflow runtime (it relies on injected `args`/`agent`/`parallel`/`log`/`phase` + top-level await) | Do not run the Workflow asset with Node. Use `scripts/codex/lifecycle-driver.js` for deterministic phase transitions, `dispatcher-adapter.js` for dispatch records, and `archive-gate.js` for the final gate. Codex performs each requested leaf/fix action, then submits its evidence to the driver. See `references/codex-lifecycle.md`. |
 | **OpenSpec `opsx:propose` / `opsx:apply` / `opsx:archive`** (skills `openspec-propose` / `openspec-apply-change` / `openspec-archive-change`) | Claude Code slash/skill wrappers around OpenSpec | Use the **OpenSpec CLI** directly: `openspec propose`, `openspec apply`, `openspec archive` (or your harness's OpenSpec integration). OpenSpec is optional — see the demo-without-openspec path in `easywos-spec`. |
 | **"fan out … one fixer agent per file, in parallel"** | independent files fixed concurrently | Parallelism is an optimization, not a requirement. On a harness without parallel subagents, process the independent fixes **sequentially** — the deterministic driver's per-file grouping and retry counting are unchanged; only wall-clock differs. Never let two edits touch the same file concurrently regardless. |
 | **`Read` / `Write` / `Edit` / `Grep` tool names** | file/search operations | Use whatever equivalent file-read/write/search tools the current harness provides; the operations are generic. |
@@ -548,14 +558,14 @@ failure mode the driver exists to remove. The driver returns
 > not standalone Node CLIs — they rely on runtime primitives the Workflow tool
 > injects (`args`, `agent(...)`, `parallel(...)`, `log`, `phase`, top-level await),
 > so `node …/outer-loop-driver.js` will NOT run them. On **Codex** (or any harness
-> without the Workflow runtime), do **not** try to execute the driver file; instead
-> **enact the same deterministic algorithm** it encodes — build/test → classify →
-> per-file fix → independent verify → retry-budget → CONVERGED/STALL — using
-> Codex's own tools, following the harness-neutral spec in
+> without the Workflow runtime), do **not** try to execute the driver file. Use
+> `scripts/codex/lifecycle-driver.js` to externalize every phase transition and
+> evidence hash while following the harness-neutral algorithm in
 > [references/outer-loop.md](references/outer-loop.md) (and
 > [references/perf-optimize-loop.md](references/perf-optimize-loop.md) for §8.5).
-> What must not change across harnesses is the **control flow** (code/algorithm
-> owns "loop again vs stop"), not the mechanism used to run it.
+> The Codex driver does not call skills itself: it emits the required next action,
+> Codex performs that bounded action, and then submits structured evidence. What
+> must not change across harnesses is the control flow and its objective gates.
 
 ---
 
@@ -771,6 +781,10 @@ lesson is only merged into the shared skill tree when it is confirmed on a
   after profiling has actually run does **not** block archive (§9) — correctness
   already passed §8 — but it is surfaced prominently in the final report.
 
+For lifecycle evidence, normalize these outcomes to `CONVERGED` or `STALLED`.
+An explicit `--no-profile` is recorded as `SKIPPED_BY_USER`. `NOT_STARTED`,
+`PROFILE_FAILED`, `NO_WORKLOAD`, and `PAUSED_NEEDS_ADMIN` are not archivable.
+
 The driver returns `{ status, reason, iterations, acceptedOptimizations,
 lessonsCaptured, finalTotalCpuMs, history, progressLog }`; cross-round state is in
 `openspec/changes/<change>/PERF-PROGRESS.md`.
@@ -779,22 +793,37 @@ lessonsCaptured, finalTotalCpuMs, history, progressLog }`; cross-round state is 
 
 ## 9. OpenSpec Archive (only on verified green)
 
-Only when §8 converged **and** the negative-control evidence exists, and no
-profiling step is paused for Administrator privileges:
+Only when §8 converged, negative-control and independent-verifier evidence
+exist, and performance is in an archivable terminal state:
 
 1. **Checkpoint gate (§1.3):** present the final tally — whole-project build
    status, the project's own test/bench pass count, list of `[NEEDS REVIEW]`
    kernels (if any), the negative-control record, and (if §8.5 ran) the
    performance result: accepted optimizations with measured speedups, any
    lessons captured into leaf skills, and any perf STALL.
-2. Run the OpenSpec archive flow (Claude Code: skill `openspec-archive-change` /
-   `opsx:archive`; **Codex/generic: `openspec archive` CLI — see §0.1**) to
-   finalize the change.
-3. Write the final state file entry.
+2. Choose exactly one host branch:
+   - **Claude Code / Workflow:** require the outer and performance Workflow
+     drivers to have reached their archivable terminal states, with their
+     evidence recorded in `.orchestrator-state.yaml`, `OUTER-PROGRESS.md`, and
+     `PERF-PROGRESS.md`. Then run the Claude archive flow via
+     `openspec-archive-change` / `opsx:archive` and write the final Workflow
+     state entry. Do not run `scripts/codex/archive-gate.js` and do not require
+     `LIFECYCLE-STATE.yaml` in this branch.
+   - **Codex:** run `node <easywos-plugin-root>/scripts/codex/archive-gate.js
+     --change openspec/changes/<change> --strict`. It validates matcher
+     provenance, every dispatch record, x64/ARM64 full-project build and
+     non-zero test counts, red→green negative control, producer/verifier
+     separation, performance evidence, hashes, and `openspec validate --strict`.
+     Only after it advances the lifecycle to `ARCHIVE_READY`, run `openspec
+     archive`, then run `lifecycle-driver.js archive-complete` with the archive
+     result evidence. Only this transition may set `ARCHIVED/COMPLETE`.
 
 Never archive a change with a red or unverified suite, an unresolved
 `[NEEDS REVIEW]` kernel that the project tests actually exercise, a build that
-does not fully link, or `PAUSED_NEEDS_ADMIN` from §8.5. Report and stop instead.
+does not fully link, or `PAUSED_NEEDS_ADMIN` from §8.5. On Codex, a failed
+archive gate also blocks archive and must not be bypassed. On Claude Code, the
+Workflow terminal state and evidence are the gate; absence of
+`LIFECYCLE-STATE.yaml` is not a failure.
 
 ---
 

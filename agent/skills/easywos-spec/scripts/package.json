@@ -4,7 +4,7 @@
   "description": "",
   "main": "spec_matcher.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node spec_matcher.test.js && node spec_matcher.decompose.test.js && node --test spec_matcher.lifecycle.test.js"
   },
   "keywords": [],
   "author": "",

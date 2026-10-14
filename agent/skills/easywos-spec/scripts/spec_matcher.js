@@ -12,6 +12,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const yaml = require("js-yaml");
 
 // ---------------------------------------------------------------------------
@@ -44,24 +45,47 @@ const DECLARATION_RE = /^\s*(my\s*\(|(static\s+)?(const\s+)?(unsigned\s+)?(int|f
 
 const COMMENT_RE = /^\s*(;|\/\/|\/\*|\*|#\s*$)/;
 
-function classifyLine(line) {
+function classifyLineScopes(line) {
   const stripped = line.trim();
-  if (!stripped) return "blank";
-  if (COMMENT_RE.test(stripped)) return "comment";
-  if (PREPROCESSOR_RE.test(stripped)) return "preprocessor";
-  if (DIRECTIVE_RE.test(stripped)) return "directive";
-  if (INLINE_ASM_LINE_RE.test(stripped) || INLINE_ASM_FRAME_RE.test(stripped)) return "inline_asm";
-  if (DECLARATION_RE.test(stripped)) return "declaration";
-  if (INTRINSIC_CALL_RE.test(stripped) && !INSTRUCTION_RE.test(stripped)) return "intrinsic_call";
-  if (INSTRUCTION_RE.test(stripped)) return "instruction";
-  if (GENERIC_FUNC_CALL_RE.test(stripped)) return "function_call";
-  return "expression";
+  if (!stripped) return ["blank"];
+  if (COMMENT_RE.test(stripped)) return ["comment"];
+
+  const scopes = new Set();
+  if (PREPROCESSOR_RE.test(stripped)) scopes.add("preprocessor");
+  if (DIRECTIVE_RE.test(stripped)) scopes.add("directive");
+  if (INLINE_ASM_LINE_RE.test(stripped) || INLINE_ASM_FRAME_RE.test(stripped)) scopes.add("inline_asm");
+  if (DECLARATION_RE.test(stripped)) scopes.add("declaration");
+  if (INTRINSIC_CALL_RE.test(stripped)) {
+    scopes.add("intrinsic_call");
+    scopes.add("function_call");
+  } else if (GENERIC_FUNC_CALL_RE.test(stripped)) {
+    scopes.add("function_call");
+  }
+  if (INSTRUCTION_RE.test(stripped)) scopes.add("instruction");
+
+  // A declaration or call can also contain a matchable expression. Keeping
+  // all applicable scopes prevents priority ordering from hiding an intrinsic
+  // such as `const int mask = _mm_movemask_epi8(v);` behind "declaration".
+  if (!["preprocessor", "directive", "inline_asm", "instruction"].some((s) => scopes.has(s))) {
+    scopes.add("expression");
+  }
+  if (scopes.size === 0) scopes.add("expression");
+  return [...scopes];
 }
 
-function classifyContext(context) {
-  return context.split("\n").map((line) => ({
+function classifyLine(line) {
+  return classifyLineScopes(line)[0];
+}
+
+function classifyContext(context, locations = []) {
+  return context.split("\n").map((line, index) => ({
     line,
-    scope: classifyLine(line),
+    scopes: classifyLineScopes(line),
+    file: locations[index] && locations[index].file ? locations[index].file : null,
+    line_number: locations[index] && Number.isInteger(locations[index].line_number)
+      ? locations[index].line_number
+      : null,
+    context_line: index + 1,
   }));
 }
 
@@ -112,50 +136,117 @@ function unescapePattern(pattern) {
   return pattern.replace(/\\\\/g, "\\");
 }
 
-function matchRuleAgainstContext(rule, classifiedLines) {
+function lineMatchesRule(rule, line) {
   const pattern = rule.pattern || "";
-  const ruleScope = rule.scope || "";
   const ruleType = rule.type || "regex";
 
-  const eligible = getEligibleScopes(ruleScope);
-  const eligibleLines = classifiedLines
-    .filter((entry) => eligible.has(entry.scope))
-    .map((entry) => entry.line);
-
-  if (eligibleLines.length === 0) return false;
-
-  const textBlock = eligibleLines.join("\n");
-
-  if (ruleType === "exact") {
-    return textBlock.includes(pattern);
-  } else if (ruleType === "prefix") {
-    return eligibleLines.some((line) => line.includes(pattern));
-  } else {
-    // regex — unescape double backslashes from YAML encoding
-    const unescaped = unescapePattern(pattern);
-    try {
-      const re = new RegExp(unescaped, "m");
-      return re.test(textBlock);
-    } catch (e) {
-      // Invalid regex — fallback to literal search
-      return textBlock.includes(pattern);
-    }
+  if (ruleType === "exact" || ruleType === "prefix") return line.includes(pattern);
+  const unescaped = unescapePattern(pattern);
+  try {
+    return new RegExp(unescaped, "m").test(line);
+  } catch (e) {
+    return line.includes(pattern);
   }
 }
 
-function matchItemAgainstSpecs(context, specs) {
-  const classifiedLines = classifyContext(context);
+function findRuleMatches(rule, classifiedLines) {
+  const ruleScope = rule.scope || "";
+
+  const eligible = getEligibleScopes(ruleScope);
+  const eligibleLines = classifiedLines.filter((entry) =>
+    entry.scopes.some((scope) => eligible.has(scope))
+  );
+
+  if (eligibleLines.length === 0) return [];
+
+  const matches = eligibleLines.filter((entry) => lineMatchesRule(rule, entry.line));
+  if (matches.length > 0) return matches;
+
+  // Preserve support for the few multiline regex rules in existing specs.
+  if ((rule.type || "regex") === "regex") {
+    const textBlock = eligibleLines.map((entry) => entry.line).join("\n");
+    try {
+      if (new RegExp(unescapePattern(rule.pattern || ""), "m").test(textBlock)) {
+        return [eligibleLines[0]];
+      }
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function matchRuleAgainstContext(rule, classifiedLines) {
+  return findRuleMatches(rule, classifiedLines).length > 0;
+}
+
+function evaluateRuleGroup(group, classifiedLines) {
+  const allOf = group.all_of || [];
+  const anyOf = group.any_of || [];
+  const noneOf = group.none_of || [];
+  const allMatches = allOf.map((rule) => ({ rule, hits: findRuleMatches(rule, classifiedLines) }));
+  const anyMatches = anyOf.map((rule) => ({ rule, hits: findRuleMatches(rule, classifiedLines) }));
+  const noneMatches = noneOf.map((rule) => ({ rule, hits: findRuleMatches(rule, classifiedLines) }));
+
+  const passes = allMatches.every((entry) => entry.hits.length > 0) &&
+    (anyMatches.length === 0 || anyMatches.some((entry) => entry.hits.length > 0)) &&
+    noneMatches.every((entry) => entry.hits.length === 0);
+
+  return {
+    passes,
+    positiveMatches: [...allMatches, ...anyMatches].filter((entry) => entry.hits.length > 0),
+  };
+}
+
+function evidenceForRule(rule, hits, specId, itemId, startIndex, groupId = null) {
+  const safeItem = String(itemId || "item").replace(/[^A-Za-z0-9_.-]+/g, "-");
+  return hits.map((hit, offset) => ({
+    evidence_id: `match-${safeItem}-${specId}-${startIndex + offset + 1}`,
+    spec_id: specId,
+    rule_id: rule.id || groupId || null,
+    group_id: groupId,
+    file: hit.file,
+    line: hit.line_number,
+    context_line: hit.context_line,
+    scopes: hit.scopes,
+    pattern: rule.pattern || "",
+    excerpt: hit.line.trim(),
+  }));
+}
+
+function matchItemAgainstSpecs(context, specs, locations = [], itemId = "item") {
+  const classifiedLines = classifyContext(context, locations);
   const candidates = [];
 
   for (const spec of specs) {
     const matchRules = (spec.metadata && spec.metadata.match_rules) || [];
+    const matchGroups = (spec.metadata && spec.metadata.match_groups) || [];
     let rulesHit = 0;
     const matchedPatterns = [];
+    const matchedEvidence = [];
 
     for (const rule of matchRules) {
-      if (matchRuleAgainstContext(rule, classifiedLines)) {
+      const hits = findRuleMatches(rule, classifiedLines);
+      if (hits.length > 0) {
         rulesHit++;
         matchedPatterns.push(rule.pattern || "");
+        matchedEvidence.push(...evidenceForRule(
+          rule, hits, spec.id, itemId, matchedEvidence.length
+        ));
+      }
+    }
+
+    const matchedGroups = [];
+    for (const group of matchGroups) {
+      const result = evaluateRuleGroup(group, classifiedLines);
+      if (!result.passes) continue;
+      matchedGroups.push(group.id || "unnamed-group");
+      for (const entry of result.positiveMatches) {
+        rulesHit++;
+        matchedPatterns.push(entry.rule.pattern || "");
+        matchedEvidence.push(...evidenceForRule(
+          entry.rule, entry.hits, spec.id, itemId, matchedEvidence.length, group.id || null
+        ));
       }
     }
 
@@ -165,6 +256,8 @@ function matchItemAgainstSpecs(context, specs) {
         spec_name: spec.name || "",
         rules_hit: rulesHit,
         matched_rules: matchedPatterns,
+        matched_groups: matchedGroups,
+        evidence: matchedEvidence,
       });
     }
   }
@@ -322,6 +415,19 @@ function decomposeItem(item, inputDir, context, threshold) {
     const members = groups.get(gk);
     members.sort((a, b) => a.start - b.start);
     const ranges = members.map((k) => `${k.start}-${k.end}`).join(", ");
+    const contextLines = [];
+    const locations = [];
+    members.forEach((k, memberIndex) => {
+      const sampleLines = k.sample.split("\n");
+      sampleLines.forEach((line, offset) => {
+        contextLines.push(line);
+        locations.push({ file: item.file_path, line_number: k.start + offset });
+      });
+      if (memberIndex + 1 < members.length) {
+        contextLines.push("; --- variant boundary ---");
+        locations.push({ file: item.file_path, line_number: null });
+      }
+    });
     return {
       id: `${item.id}__${gk}`,
       parent_id: item.id,
@@ -332,9 +438,8 @@ function decomposeItem(item, inputDir, context, threshold) {
       functions: members.map((k) => k.name),
       function_count: members.length,
       // Matching context: concatenated body samples, capped by parseKernels.
-      context: members.map((k) => k.sample).join(
-        "\n; --- variant boundary --- \n"
-      ),
+      context: contextLines.join("\n"),
+      locations,
     };
   });
 
@@ -381,12 +486,22 @@ function parseArgs() {
  * Concatenated text from all segments is returned, joined by a marker line so
  * the regex matcher does not bridge across segment boundaries.
  */
-function resolveContext(item, inputDir) {
+function resolveContextDetailed(item, inputDir) {
   if (item.context) {
-    return item.context;
+    const lines = String(item.context).split("\n");
+    let firstLine = null;
+    const rangeMatch = /^\s*(\d+)\s*-/.exec(String(item.code_range || ""));
+    if (rangeMatch) firstLine = parseInt(rangeMatch[1], 10);
+    return {
+      context: String(item.context),
+      locations: lines.map((line, index) => ({
+        file: item.file_path || null,
+        line_number: firstLine === null ? null : firstLine + index,
+      })),
+    };
   }
   if (!item.code_range) {
-    return "";
+    return { context: "", locations: [] };
   }
 
   const fileCache = new Map();
@@ -405,6 +520,7 @@ function resolveContext(item, inputDir) {
 
   const segments = String(item.code_range).split(",").map(s => s.trim()).filter(Boolean);
   const chunks = [];
+  const locations = [];
 
   for (const seg of segments) {
     // Find the LAST colon — paths on Windows can contain a drive letter colon
@@ -432,12 +548,23 @@ function resolveContext(item, inputDir) {
       console.error(`Warning: code_range '${seg}' exceeds bounds of ${relPath} (${lines.length} lines, item: ${item.id})`);
       continue;
     }
-    chunks.push(lines.slice(start, end).join("\n"));
+    const selected = lines.slice(start, end);
+    if (chunks.length > 0) {
+      chunks.push("/* --- code_range segment boundary --- */");
+      locations.push({ file: null, line_number: null });
+    }
+    chunks.push(...selected);
+    selected.forEach((line, index) => locations.push({
+      file: relPath,
+      line_number: start + index + 1,
+    }));
   }
 
-  // Join with a sentinel so multiline regex patterns (if any) cannot bridge
-  // across segments. Plain newline join is also safe for line-based regex.
-  return chunks.join("\n/* --- code_range segment boundary --- */\n");
+  return { context: chunks.join("\n"), locations };
+}
+
+function resolveContext(item, inputDir) {
+  return resolveContextDetailed(item, inputDir).context;
 }
 
 // ---------------------------------------------------------------------------
@@ -483,7 +610,8 @@ function main() {
   const results = [];
   let decomposedCount = 0;
   for (const item of portingItems) {
-    const context = resolveContext(item, inputDir);
+    const resolved = resolveContextDetailed(item, inputDir);
+    const context = resolved.context;
 
     const children = args.noDecompose
       ? null
@@ -499,13 +627,13 @@ function main() {
           code_range: child.code_range,
           functions: child.functions,
           function_count: child.function_count,
-          matches: matchItemAgainstSpecs(child.context, specs),
+          matches: matchItemAgainstSpecs(child.context, specs, child.locations, child.id),
         });
       }
     } else {
       results.push({
         porting_item_id: item.id || "unknown",
-        matches: matchItemAgainstSpecs(context, specs),
+        matches: matchItemAgainstSpecs(context, specs, resolved.locations, item.id || "unknown"),
       });
     }
   }
@@ -515,7 +643,20 @@ function main() {
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
-  fs.writeFileSync(args.output, JSON.stringify({ candidates: results }, null, 2), "utf8");
+  const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  fs.writeFileSync(args.output, JSON.stringify({
+    matcher: {
+      schema_version: 1,
+      executed_at: new Date().toISOString(),
+      script: path.resolve(__filename),
+      script_sha256: sha256(__filename),
+      input: path.resolve(args.input),
+      input_sha256: sha256(args.input),
+      specs: path.resolve(args.specs),
+      specs_sha256: sha256(args.specs),
+    },
+    candidates: results,
+  }, null, 2), "utf8");
 
   const suffix = decomposedCount
     ? ` (${decomposedCount} whole-file item(s) decomposed into per-kernel groups)`
@@ -523,4 +664,18 @@ function main() {
   console.log(`Screening complete: ${results.length} items processed, output: ${args.output}${suffix}`);
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = {
+  classifyLine,
+  classifyLineScopes,
+  classifyContext,
+  findRuleMatches,
+  matchRuleAgainstContext,
+  evaluateRuleGroup,
+  matchItemAgainstSpecs,
+  resolveContext,
+  resolveContextDetailed,
+  decomposeItem,
+  main,
+};

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easywos.local/schemas/dispatch-record.schema.json",
+  "title": "EasyWoS dispatch request or result",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["schema_version", "dispatch_id", "porting_item_id", "mode", "primary_leaf_skill", "port_spec_ids", "prepared_at"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "mode": { "enum": ["spec-driven", "llm-freeform"] },
+        "port_spec_ids": { "type": "array" }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["schema_version", "dispatch_id", "status", "request_sha256", "producer", "recorded_at"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "status": { "enum": ["APPLIED", "NEEDS_RETRY", "FAILED"] }
+      }
+    }
+  ]
+}
