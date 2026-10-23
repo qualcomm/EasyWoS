@@ -19,6 +19,87 @@
 ![EasyWoS Migration Flow](public/static/EasyWoS_Harness_Design.png)
 ---
 
+## EasyWoS Skills
+
+`easywos-skills`, located under [`agent/`](agent/), is a skill tree for AI coding agents that ports x86/x64 code to Windows on Snapdragon (ARM64 and ARM64EC).
+
+It combines EasyWoS scan-result orchestration with focused migration skills covering:
+
+- SSE/AVX intrinsics to ARM NEON
+- x64 assembly to AArch64
+- ARM64 and ARM64EC build-system enablement
+- ARM64EC JIT executable-memory handling
+- Porting verification and report generation
+- Performance profiling and optimization
+
+### Workflow
+
+The skills follow an end-to-end migration workflow:
+
+1. Generate or provide an EasyWoS ARM64 porting YAML report.
+2. Match scan findings to migration specifications with `easywos-spec`.
+3. Route matched items to specialized skills with `dispatcher-skill`.
+4. Generate and apply the ARM64 implementation changes.
+5. Build and run the generated verification workflow.
+6. Profile, optimize, and archive the final result when required.
+
+The migration must be performed through the complete skill flow:
+
+```text
+EasyWoS scan
+    → easywos-spec
+    → dispatcher-skill
+    → specialized leaf skills
+    → build and verification
+```
+
+If the generated result needs improvement, update the relevant skill or specification so that the workflow itself produces the improved implementation instead of bypassing the skill pipeline.
+
+### Core Skills
+
+| Skill | Purpose |
+|---|---|
+| `arm64-port-orchestrator` | Runs the complete scan, port, verify, build, test, fix, profile, and archive lifecycle |
+| `easywos-spec` | Converts EasyWoS scan findings into matched porting tasks |
+| `dispatcher-skill` | Routes matched tasks to specialized migration skills |
+| `sse-avx-to-neon` | Converts SSE/AVX intrinsics to ARM NEON |
+| `intrinsics-x64-to-arm64` | Guides Windows C++ SIMD migration |
+| `asm-x64-to-arm64` | Converts x64 inline or MASM assembly to AArch64 |
+| `enable-windows-arm64` | Adds ARM64 support to project build systems |
+| `jit-arm64ec-virtualalloc-fix-skill` | Handles ARM64EC JIT executable-memory requirements |
+| `arm64-porting-report` | Generates migration reports |
+| `etl-generator`, `perf-sampling-parser`, `perf-optimizer` | Capture, analyze, and optimize application performance |
+
+### Installation
+
+Install all EasyWoS skills for every detected AI coding agent:
+
+```bash
+npx skills add qualcomm/EasyWoS/agent --all
+```
+
+Alternatively, use the full repository URL:
+
+```bash
+npx skills add https://github.com/qualcomm/EasyWoS/tree/main/agent --all
+```
+
+Re-run the installation command after repository updates to receive new or updated skills.
+
+### Prerequisites
+
+Depending on the selected workflow, the following tools may be required:
+
+- Node.js
+- OpenSpec CLI
+- CMake 3.14 or newer
+- An ARM64, ARM64EC, or AArch64-capable build environment
+- MSVC, Clang, GCC, or another suitable target compiler
+
+For complete installation instructions, workflow details, and examples, see [`agent/USAGE.md`](agent/USAGE.md).
+
+---
+
 ## Tech Stack
 
 ### Backend
