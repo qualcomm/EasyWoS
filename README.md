@@ -1,74 +1,106 @@
-# EasyWoS
+<h1 align="center">
+EasyWoS
+</h1>
 
-**EasyWoS** is an end-to-end solution that helps migrate software from the x86 architecture to the ARM64 architecture. Through static code scanning, it detects potential incompatible code issues, maps these issues to skills, and lets users complete the entire code migration simply by running /ospx:apply. By combining the capabilities of static code scanning, OpenSpec, and skills, EasyWoS provides users with a complete, end-to-end solution for code migration and performance optimization.
+<div align="center">
+  <a href="README.zh-CN.md">中文</a> | <span>English</span>
+</div>
+
+### [Watch the demo video](demo/easywos-dev-demo.mp4)
+
+**EasyWoS is an end-to-end porting solution, not a collection of one-off converters.** It takes a project from *un-analyzed x64 source* to a *ported, verified, measured ARM64 build* — and every stage in between is part of the product:
+
+```
+scan → plan → route → port → verify → integrate → build → test → fix → profile → optimize → capture
+```
+
+
+
+**EasyWoS** helps move software from x86/x64 to Windows on Snapdragon (ARM64 and ARM64EC). It combines two complementary parts:
+
+1. **Static code analysis** — a Web application that scans C, C++, and assembly projects, identifies architecture-dependent code, and produces ARM64 compatibility reports from uploaded source archives or Git repositories.
+2. **LLM-driven end-to-end porting** — `easywos-skills` under [`agent/`](agent/) turns scan findings into an executable migration plan, routes each item to an expert skill, generates and verifies ARM64 changes, integrates the whole project, and iterates on correctness and performance until it reaches a deterministic terminal state.
+
+Together, these parts take a project from architecture discovery through verified migration, whole-project testing, profiling, optimization, and evidence-backed archival.
+
+---
+
+## EasyWoS Architecture
+
+![EasyWoS architecture](public/static/EasyWoS_integrated_flow_4K_v2.png)
+
+EasyWoS is organized as a scan-and-port pipeline backed by a three-layer expert skill tree:
+
+- **L1 orchestrator** drives the [whole-project lifecycle](#easywos-end-to-end-lifecycle): scan, propose, dispatch, integrate, build, test, profile, optimize, and archive.
+- **L2 dispatcher** consumes the specification matches for each finding and routes it to the appropriate leaf skill without embedding porting logic itself.
+- **L3 leaf skills** perform the actual migration work, including SSE/AVX-to-NEON translation, x64 assembly conversion, ARM64/ARM64EC build enablement, JIT fixes, and performance optimization.
+
+Four feedback loops make the pipeline self-repairing:
+
+- The **inner loop** builds and tests each migrated kernel, applies a mandatory negative control, and redispatches failures with structured feedback up to a bounded retry limit.
+- The **outer loop** integrates the migrated code into the real project, runs the whole ARM64 build and the project's own tests, then classifies and repairs integration failures.
+- The **performance loop** profiles the real port, identifies actionable hotspots, accepts only independently verified speedups, and repeats until performance converges or no safe improvement remains.
+- The **self-evolution loop** feeds verified fixes and measured optimization lessons back into the specifications and skill library so later projects start from a stronger baseline.
+
+All loops are bounded and evidence-driven. A run finishes as `CONVERGED` or `STALLED` rather than hanging indefinitely, and archive gates prevent unverified results from being treated as complete.
+
+---
+
+## EasyWoS End-to-End Lifecycle
+
+![EasyWoS migration lifecycle](public/static/EasyWoS_Harness_Design.png)
+
+The lifecycle progresses through code scanning, spec matching, expert dispatch, per-item conversion and verification, whole-project integration, project-native testing, profiling, optimization, and archival.
 
 ---
 
 ## Features
 
-| Feature | Description | Status |
-|---|---|---|
-| **Code Compatibility Scanning** | Scans C/C++/Assembly source code for ARM64/ARM64EC compatibility issues, supporting upload and Git repository input | ✅ Available |
-| **EasyBuild** | Step-by-step guide for cross-compiling Windows on Arm applications (ARM64/ARM64EC) on x86-64 host machines using MSVC or LLVM toolchains | ✅ Available |
-| **Performance Evaluation** | Integration with the Qualcomm Top-Down Tool (WPA plugin) for PMU-based CPU microarchitecture performance analysis | ✅ Available |
-| **Performance Optimization** | Advanced optimization recommendations | 🚧 Coming Soon |
+| Area | Feature | What it provides | Status |
+|---|---|---|---|
+| Static analysis | **Code Compatibility Scanning** | Scans C/C++/assembly source for ARM64 and ARM64EC compatibility issues from uploaded archives or Git repositories, then generates HTML, JSON, and porting-oriented reports. | ✅ Available |
+| Static analysis | **EasyBuild** | Guides cross-compilation of Windows on Arm applications on x86-64 hosts with MSVC or LLVM toolchains. | ✅ Available |
+| Planning | **Spec Matching and Task Generation** | Decomposes large assembly inputs, screens source with concrete evidence, refines matches with an LLM, assigns confidence, and produces auditable migration tasks. | ✅ Available |
+| Routing | **Expert Skill Dispatch** | Routes each finding to one or more specialized leaf skills, supports baseline fallback, and carries structured failure feedback into retries. | ✅ Available |
+| Porting | **ARM64 and ARM64EC Migration** | Covers SSE/AVX-to-NEON translation, x64/MASM-to-AArch64 conversion, ARM64 inline assembly conversion, build-system enablement, and ARM64EC JIT executable-memory handling. | ✅ Available |
+| Verification | **Per-Kernel Correctness Loop** | Generates item-level build and test workflows, requires red-to-green negative-control evidence, and retries failed items with a bounded budget. | ✅ Available |
+| Integration | **Whole-Project Build and Test Loop** | Integrates generated kernels into the real project, runs its native ARM64 build and tests, classifies failures, and applies bounded repairs. | ✅ Available |
+| Performance | **Profile-Guided Optimization** | Captures ETL traces, produces per-process CPU rankings and SpeedScope flame graphs, attributes hotspots to source, and accepts only measured, correctness-preserving improvements. | ✅ Available |
+| Governance | **Deterministic Lifecycle and Archive Gates** | Records matcher, dispatch, build, test, negative-control, verifier, and performance evidence; incomplete or stale runs cannot be archived as successful. | ✅ Available |
+| Evolution | **Self-Evolving Skill Library** | Feeds verified fixes and profiler-confirmed lessons back into leaf specifications, regenerating the combined spec index for future runs. | ✅ Available |
 
----
-
-## EasyWoS End-to-End lifecycle
-![EasyWoS Migration Flow](public/static/EasyWoS_Harness_Design.png)
 ---
 
 ## EasyWoS Skills
 
-`easywos-skills`, located under [`agent/`](agent/), is a skill tree for AI coding agents that ports x86/x64 code to Windows on Snapdragon (ARM64 and ARM64EC).
+`easywos-skills`, located under `agent/`, is **the second part of the EasyWoS project and serves as an** LLM-driven execution layer for complex x86/x64-to-ARM64 and ARM64EC migrations. It is designed for ports where code that merely compiles is not enough: the generated result must be traceable to a matched recipe, proven correct, integrated into the real build, and measured for regressions. If generated output exposes a recipe gap, the relevant skill or specification is improved and re-verified instead of bypassing the pipeline with an ad-hoc implementation.
 
-It combines EasyWoS scan-result orchestration with focused migration skills covering:
+> `easywos-skills`  can be used independently in your agent harness, such as codex and claude code.
 
-- SSE/AVX intrinsics to ARM NEON
-- x64 assembly to AArch64
-- ARM64 and ARM64EC build-system enablement
-- ARM64EC JIT executable-memory handling
-- Porting verification and report generation
-- Performance profiling and optimization
+### Skill file structure
 
-### Workflow
-
-The skills follow an end-to-end migration workflow:
-
-1. Generate or provide an EasyWoS ARM64 porting YAML report.
-2. Match scan findings to migration specifications with `easywos-spec`.
-3. Route matched items to specialized skills with `dispatcher-skill`.
-4. Generate and apply the ARM64 implementation changes.
-5. Build and run the generated verification workflow.
-6. Profile, optimize, and archive the final result when required.
-
-The migration must be performed through the complete skill flow:
+Each subdirectory under `agent/skills/` is one skill; its directory name is the skill's
+invocation name and it contains a `SKILL.md` (plus optional `scripts/`,
+`references/`, `assets/`).
 
 ```text
-EasyWoS scan
-    → easywos-spec
-    → dispatcher-skill
-    → specialized leaf skills
-    → build and verification
+agent/skills/
+├── arm64-port-orchestrator/            # Top-level end-to-end loop: scan → port → verify → integrate → build → test → fix → profile → archive
+├── easywos-spec/                       # EasyWoS scan orchestration and task generation
+├── dispatcher-skill/                   # Routes matched porting items to leaf skills
+├── arm64-baseline-porting/             # Baseline ARM64 correctness constraints
+├── sse-avx-to-neon/                    # SSE/AVX intrinsics to NEON guidance
+├── intrinsics-x64-to-arm64/            # Windows C++ SIMD migration guidance
+├── asm-x64-to-arm64/                   # x64 inline/MASM assembly to AArch64 guidance
+├── arm64-inlineasm-to-intrinsics/      # ARM64 inline assembly to portable intrinsics
+├── enable-windows-arm64/               # Build-system ARM64 enablement guidance
+├── jit-arm64ec-virtualalloc-fix-skill/ # ARM64EC JIT executable memory guidance
+├── arm64-porting-report/               # Porting report generation
+├── leaf-skill-creator/                 # Skill/spec scaffolding assistance
+├── etl-generator/                      # Profiling: capture an ETL CPU trace of the ported binary
+├── perf-sampling-parser/               # Profiling: per-process CPU usage → SpeedScope flame graph
+└── perf-optimizer/                     # Profiling: flame-graph root-cause + optimization guidance
 ```
-
-If the generated result needs improvement, update the relevant skill or specification so that the workflow itself produces the improved implementation instead of bypassing the skill pipeline.
-
-### Core Skills
-
-| Skill | Purpose |
-|---|---|
-| `arm64-port-orchestrator` | Runs the complete scan, port, verify, build, test, fix, profile, and archive lifecycle |
-| `easywos-spec` | Converts EasyWoS scan findings into matched porting tasks |
-| `dispatcher-skill` | Routes matched tasks to specialized migration skills |
-| `sse-avx-to-neon` | Converts SSE/AVX intrinsics to ARM NEON |
-| `intrinsics-x64-to-arm64` | Guides Windows C++ SIMD migration |
-| `asm-x64-to-arm64` | Converts x64 inline or MASM assembly to AArch64 |
-| `enable-windows-arm64` | Adds ARM64 support to project build systems |
-| `jit-arm64ec-virtualalloc-fix-skill` | Handles ARM64EC JIT executable-memory requirements |
-| `arm64-porting-report` | Generates migration reports |
-| `etl-generator`, `perf-sampling-parser`, `perf-optimizer` | Capture, analyze, and optimize application performance |
 
 ### Installation
 
@@ -96,56 +128,58 @@ Depending on the selected workflow, the following tools may be required:
 - An ARM64, ARM64EC, or AArch64-capable build environment
 - MSVC, Clang, GCC, or another suitable target compiler
 
-For complete installation instructions, workflow details, and examples, see [`agent/USAGE.md`](agent/USAGE.md).
+For installation details, operating contracts, examples, and advanced workflows, see [`agent/USAGE.md`](agent/USAGE.md).
 
 ---
 
-## Tech Stack
+## Static Analysis Web Application
 
-### Backend
-- **Framework**: [Sanic](https://sanic.dev/) (async Python web framework)
-- **Database**: SQLite via SQLAlchemy 2.0 + aiosqlite
-- **Authentication**: JWT (sanic-jwt)
-- **Remote Execution**: asyncssh / Fabric for SSH-based machine management
-- **Report Generation**: Jinja2 HTML templates
+The Web application is the static-analysis and project-management front end of EasyWoS. The sections below cover its implementation, deployment, API, and local development.
 
-### Frontend
-- **Framework**: React 18 + Vite 5
-- **UI Library**: Ant Design 5
+### Tech Stack
+
+#### Backend
+
+- **Framework**: [Sanic](https://sanic.dev/) (async Python Web framework)
+- **Database**: SQLite via SQLAlchemy 2.0 and aiosqlite
+- **Authentication**: JWT via sanic-jwt
+- **Remote execution**: asyncssh and Fabric for SSH-based machine management
+- **Report generation**: Jinja2 HTML templates
+
+#### Frontend
+
+- **Framework**: React 18 and Vite 5
+- **UI library**: Ant Design 5
 - **Routing**: React Router 7
 
-### Scanner
-- C/C++/ASM compatibility advisor based on ARM64 porting analysis tools
-- Supports scanning from uploaded archives (`.zip`, `.rar`, `.tar`, `.tar.gz`, `.tar.xz`) or Git repositories
-- Generates HTML and JSON scan reports
+#### Scanner
 
----
+- C/C++/assembly compatibility advisor based on ARM64 porting analysis tools
+- Source input from Git repositories or uploaded `.zip`, `.rar`, `.tar`, `.tar.gz`, and `.tar.xz` archives
+- HTML and JSON scan reports
 
-## Requirements
+### Requirements
 
-Only **Docker** is required. All dependencies are bundled in the Docker image.
+Only **Docker** is required for containerized use. All application dependencies are bundled in the image.
 
 | Requirement | Minimum | Recommended |
 |---|---|---|
 | Docker | 17.05 (multi-stage build support) | 20.10+ (LTS, BuildKit enabled by default) |
 
----
+### Quick Start
 
-## Quick Start
-
-### 1. Build the Docker Image
+#### 1. Build the Docker Image
 
 ```bash
 git clone https://github.com/qualcomm/EasyWoS.git
 cd EasyWoS
-# The tag is easywos:latest and it will be used in the next step
 docker build -t easywos:latest .
 ```
 
-### 2. Run the Container
+#### 2. Run the Container
 
 ```bash
-# Replace /your/local/workspace with your desired host workspace path
+# Replace /your/local/workspace with the desired host workspace path.
 docker run -itd \
   -p 8888:8888 \
   -v /your/local/workspace:/app/workspace \
@@ -153,52 +187,44 @@ docker run -itd \
   easywos:latest
 ```
 
-### 3. Access the Application
+#### 3. Open the Application
 
-Open your browser and navigate to:
+Visit `http://localhost:8888`.
 
-```
-http://localhost:8888
-```
+#### 4. Log In
 
-### 4. Log In
-
-A default admin account is pre-configured. Use the following credentials to log in:
+A default administrator account is preconfigured:
 
 | Field | Value |
 |---|---|
 | Username | `admin` |
 | Password | `easywos` |
 
-> 💡 These are the default credentials for users outside of Qualcomm.
+> These are the default credentials for users outside Qualcomm. Change all secrets before a production deployment.
 
----
+### API Overview
 
-## API Overview
-
-The REST API is available under the `/api` prefix. All endpoints (except authentication) require a JWT Bearer token.
+The REST API is available under the `/api` prefix. All endpoints except authentication require a JWT bearer token.
 
 | Prefix | Description |
 |---|---|
 | `/api/user` | User registration and authentication |
-| `/api/machine` | Remote machine (SSH) management |
+| `/api/machine` | Remote machine and SSH management |
 | `/api/task` | Code compatibility scan task lifecycle |
 | `/api/file` | File upload and storage management |
 | `/api/evaluation` | Performance evaluation task management |
 
-Interactive API documentation (OpenAPI/Swagger) is available at `/docs` when the server is running.
+Interactive OpenAPI/Swagger documentation is available at `/docs` while the server is running.
 
----
+### Development
 
-## Development
-
-### Prerequisites
+#### Prerequisites
 
 - Python 3.10+
 - Node.js 18+
-- Docker (for containerized deployment)
+- Docker for containerized deployment
 
-### Backend Setup
+#### Backend Setup
 
 ```bash
 pip install -r requirement.txt
@@ -207,27 +233,26 @@ python main.py
 
 The backend server starts on `http://0.0.0.0:8888`.
 
-### Frontend Setup
+#### Frontend Setup
 
 ```bash
 npm install
 npm run dev
 ```
 
-The Vite dev server starts on `http://localhost:5173` with API requests proxied to the backend.
+The Vite development server starts on `http://localhost:5173` and proxies API requests to the backend.
 
-### Production Build
+#### Production Build
 
-The Docker image performs a multi-stage build:
-1. **Stage 1** — Builds the React frontend (`npm run build`)
-2. **Stage 2** — Compiles Python dependency wheels
-3. **Stage 3** — Assembles the final slim runtime image
+The Docker image uses a multi-stage build:
 
----
+1. Build the React frontend with `npm run build`.
+2. Compile Python dependency wheels.
+3. Assemble the final slim runtime image.
 
-## Configuration
+### Configuration
 
-Key settings are in `settings.py`:
+Key settings are defined in `settings.py`:
 
 | Setting | Default | Description |
 |---|---|---|
@@ -237,7 +262,7 @@ Key settings are in `settings.py`:
 | `JWT_EXPIRATION_DELTA` | `7200` (2 hours) | JWT token expiration in seconds |
 | `REQUEST_MAX_SIZE` | `2000000000` (2 GB) | Maximum upload size |
 
-> ⚠️ **Security Notice**: Change `SECRET` and `JWT_SECRET_KEY` before deploying to production.
+> **Security notice:** Change `SECRET`, `JWT_SECRET_KEY`, and the default administrator password before deploying to production.
 
 ---
 
@@ -245,20 +270,20 @@ Key settings are in `settings.py`:
 
 | Branch | Description |
 |---|---|
-| `main` | Primary development branch. All contributions should be based on and submitted to this branch via pull requests. |
+| `main` | Primary development branch. Base contributions on this branch and submit them through pull requests. |
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please read the [CONTRIBUTING.md](CONTRIBUTING.md) guide before submitting a pull request.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
 
 ---
 
 ## Getting in Contact
 
-- [Report an Issue on GitHub](../../issues)
-- [Open a Discussion on GitHub](../../discussions)
+- [Report an issue on GitHub](../../issues)
+- [Open a discussion on GitHub](../../discussions)
 - [Email us](mailto:haozen@qti.qualcomm.com) for general questions
 
 ---
