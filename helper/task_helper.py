@@ -25,7 +25,7 @@ from models.task import Task, TaskResult
 from util.http import rsp
 from util.common import datetime_toString_without_space, datetime_toString
 from util.const import WORKSPACE_PATH
-from util.command import execute_linux_command, execute_linux_command_with_log_redirect
+from util.command import execute_linux_command, execute_linux_command_args, execute_linux_command_with_log_redirect
 from util.command import execute_linux_command_without_log_redirect
 from .scanner_helper import generate_scan_command
 
@@ -66,8 +66,8 @@ async def create_task(data) -> rsp:
              return rsp(code=500, message='Invalid git repository URL. URL should end with .git')
 
         if branch:
-            check_branch_cmd = f'git ls-remote --heads {repo_url} {branch}'
-            stdout, stderr, code = await execute_linux_command(check_branch_cmd)
+            check_branch_cmd = ['git', 'ls-remote', '--heads', '--', repo_url, branch]
+            stdout, stderr, code = await execute_linux_command_args(check_branch_cmd)
             if code != 0:
                  return rsp(code=500, message=f'Failed to check branch: {stderr}')
             
@@ -103,13 +103,14 @@ async def create_task(data) -> rsp:
         commit = data.get('commit')
 
         await execute_linux_command(f'mkdir -p {os.path.dirname(scan_path)}')
-        cmd = f'git clone {repo_url} {scan_path}'
+        cmd = ['git', 'clone']
         if branch:
-            cmd += f' -b {branch}'
+            cmd.extend(['--branch', branch])
+        cmd.extend(['--', repo_url, scan_path])
         
         try:
             # Set timeout to 10 minutes (600 seconds)
-            stdout, stderr, code = await asyncio.wait_for(execute_linux_command(cmd), timeout=600)
+            stdout, stderr, code = await asyncio.wait_for(execute_linux_command_args(cmd), timeout=600)
             if code != 0:
                 await Task.delete(Task.id == task.id)
                 await execute_linux_command(f'rm -rf {os.path.dirname(scan_path)}')
@@ -120,8 +121,8 @@ async def create_task(data) -> rsp:
             return rsp(code=500, message='Git clone timeout (exceeded 10 minutes)')
 
         if commit:
-             cmd = f'cd {scan_path} && git checkout {commit}'
-             stdout, stderr, code = await execute_linux_command(cmd)
+             cmd = ['git', 'checkout', commit]
+             stdout, stderr, code = await execute_linux_command_args(cmd, cwd=scan_path)
              if code != 0:
                  await Task.delete(Task.id == task.id)
                  await execute_linux_command(f'rm -rf {os.path.dirname(scan_path)}')

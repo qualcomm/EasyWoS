@@ -9,6 +9,7 @@ import signal
 import psutil
 import asyncio
 import asyncssh
+from typing import Optional, Sequence
 from fabric import Connection
 from paramiko import SSHException, AuthenticationException
 from app.log import log
@@ -23,6 +24,21 @@ async def execute_linux_command(cmd: str):
     )
     stdout, stderr = await proc.communicate()
     log.logger.info(f'{cmd!r} exited with {proc.returncode}')
+    return stdout.decode().strip(), stderr.decode().strip(), proc.returncode
+
+
+async def execute_linux_command_args(args: Sequence[str], cwd: Optional[str] = None):
+    """Execute a command without invoking a shell."""
+    command = [str(arg) for arg in args]
+    log.logger.info(f'cmd: {command!r}')
+    proc = await asyncio.create_subprocess_exec(
+        *command,
+        cwd=cwd,
+        stderr=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
+    log.logger.info(f'{command!r} exited with {proc.returncode}')
     return stdout.decode().strip(), stderr.decode().strip(), proc.returncode
 
 
