@@ -10,6 +10,35 @@ import shutil
 import xml.etree.ElementTree as ET
 
 
+def _config_from_condition(condition):
+    """Return (configuration, platform) from an MSBuild condition such as
+    '$(Configuration)|$(Platform)'=='Debug|x64', or None if it has no such test."""
+    match = re.search(r"==\s*'([^'|]+)\|([^']+)'", condition)
+    return match.groups() if match else None
+
+
+def _arm64_clone_sources(groups):
+    """Pick the Win32/x64 groups to clone for ARM64.
+
+    Returns (config_name, group) pairs. When a configuration has both an x64
+    and a Win32 group, only the x64 one is used, so Win32-only settings are
+    not stacked on top of the x64 ones in the ARM64 configuration.
+    """
+    existing = [_config_from_condition(g.get('Condition', '')) for g in groups]
+    sources = []
+    for g in groups:
+        cfg = _config_from_condition(g.get('Condition', ''))
+        if not cfg or cfg[1] not in ('Win32', 'x64'):
+            continue
+        config_name, platform = cfg
+        if (config_name, 'ARM64') in existing:
+            continue
+        if platform == 'Win32' and (config_name, 'x64') in existing:
+            continue
+        sources.append((config_name, g))
+    return sources
+
+
 def add_vcxproj_arm64(file_path, backup=True):
     """Add ARM64 configuration to .vcxproj file."""
     try:
@@ -70,16 +99,7 @@ def add_vcxproj_arm64(file_path, backup=True):
         print(f"  Using platform toolset: {platform_toolset}")
         
         # Find configurations to clone
-        configs_to_add = []
-        for pg in property_groups:
-            condition = pg.get('Condition', '')
-            if 'Win32' in condition or 'x64' in condition:
-                # Extract configuration name (Debug/Release)
-                match = re.search(r"'([^']+)\|", condition)
-                if match:
-                    config_name = match.group(1)
-                    if not any(f'{config_name}|ARM64' in pg2.get('Condition', '') for pg2 in property_groups):
-                        configs_to_add.append((config_name, pg))
+        configs_to_add = _arm64_clone_sources(property_groups)
         
         # Add ARM64 PropertyGroups
         for config_name, source_pg in configs_to_add:
@@ -112,15 +132,7 @@ def add_vcxproj_arm64(file_path, backup=True):
         # 3. Add ARM64 ItemDefinitionGroups (CRITICAL for build settings)
         item_def_groups = root.findall(".//ItemDefinitionGroup[@Condition]", ns)
         
-        idg_configs_to_add = []
-        for idg in item_def_groups:
-            condition = idg.get('Condition', '')
-            if 'Win32' in condition or 'x64' in condition:
-                match = re.search(r"'([^']+)\|", condition)
-                if match:
-                    config_name = match.group(1)
-                    if not any(f'{config_name}|ARM64' in idg2.get('Condition', '') for idg2 in item_def_groups):
-                        idg_configs_to_add.append((config_name, idg))
+        idg_configs_to_add = _arm64_clone_sources(item_def_groups)
         
         # Add ARM64 ItemDefinitionGroups
         import copy
